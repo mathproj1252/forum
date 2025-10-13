@@ -24,6 +24,24 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/mathjax/2.7.9/MathJax.js?config=TeX-AMS-MML_HTMLorMML"></script>
 
     <script>
+        // Конфигурация Supabase
+        const SUPABASE_URL = 'https://icinmrmefhqavemeeexz.supabase.co';
+        const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImljaW5tcm1lZmhxYXZlbWVlZXh6Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjAyNTM1MTEsImV4cCI6MjA3NTgyOTUxMX0.Boza1RmPpeKEiDBLj48Wh5aEzSCikwSSbITOgDc78mU';
+
+        // Инициализация Supabase клиента
+        const supabase = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+    </script>
+    
+    <script>
+        
+        // Добавьте в начало скрипта
+supabase.auth.onAuthStateChange((event, session) => {
+    if (event === 'SIGNED_OUT') {
+        currentUser = null;
+        localStorage.removeItem('current_user');
+        checkAuthState();
+    }
+});
         
         let loadingPromise = null;
 
@@ -47,115 +65,90 @@ async function hideLoading() {
     document.getElementById('loading-overlay').style.display = 'none';
 }
 
-    // Класс для работы с IndexedDB
-    class ForumDatabase {
-        constructor() {
-            this.dbName = 'MathForumDB';
-            this.version = 3;
-            this.db = null;
-        }
-
-        async init() {
-            return new Promise((resolve, reject) => {
-                const request = indexedDB.open(this.dbName, this.version);
-                
-                request.onerror = () => reject(request.error);
-                request.onsuccess = () => {
-                    this.db = request.result;
-                    resolve(this.db);
-                };
-                
-                request.onupgradeneeded = (event) => {
-                    const db = event.target.result;
-                    
-                    if (!db.objectStoreNames.contains('problems')) {
-                        const problemsStore = db.createObjectStore('problems', { keyPath: 'id' });
-                        problemsStore.createIndex('authorId', 'authorId', { unique: false });
-                        problemsStore.createIndex('date', 'date', { unique: false });
-                    }
-                    
-                    if (!db.objectStoreNames.contains('users')) {
-                        db.createObjectStore('users', { keyPath: 'id' });
-                    }
-                    
-                    if (db.objectStoreNames.contains('solutions')) {
-                        db.deleteObjectStore('solutions');
-                    }
-                    
-                    if (db.objectStoreNames.contains('comments')) {
-                        db.deleteObjectStore('comments');
-                    }
-                };
-            });
-        }
-
-        async add(storeName, data) {
-            return new Promise((resolve, reject) => {
-                const transaction = this.db.transaction([storeName], 'readwrite');
-                const store = transaction.objectStore(storeName);
-                const request = store.add(data);
-                
-                request.onerror = () => reject(request.error);
-                request.onsuccess = () => resolve(request.result);
-            });
-        }
-
-        async get(storeName, key) {
-            return new Promise((resolve, reject) => {
-                const transaction = this.db.transaction([storeName], 'readonly');
-                const store = transaction.objectStore(storeName);
-                const request = store.get(key);
-                
-                request.onerror = () => reject(request.error);
-                request.onsuccess = () => resolve(request.result);
-            });
-        }
-
-        async getAll(storeName, indexName = null, query = null) {
-            return new Promise((resolve, reject) => {
-                const transaction = this.db.transaction([storeName], 'readonly');
-                const store = transaction.objectStore(storeName);
-                const target = indexName ? store.index(indexName) : store;
-                const request = query ? target.getAll(query) : target.getAll();
-                
-                request.onerror = () => reject(request.error);
-                request.onsuccess = () => resolve(request.result);
-            });
-        }
-
-        async update(storeName, data) {
-            return new Promise((resolve, reject) => {
-                const transaction = this.db.transaction([storeName], 'readwrite');
-                const store = transaction.objectStore(storeName);
-                const request = store.put(data);
-                
-                request.onerror = () => reject(request.error);
-                request.onsuccess = () => resolve(request.result);
-            });
-        }
-
-        async delete(storeName, key) {
-            return new Promise((resolve, reject) => {
-                const transaction = this.db.transaction([storeName], 'readwrite');
-                const store = transaction.objectStore(storeName);
-                const request = store.delete(key);
-                
-                request.onerror = () => reject(request.error);
-                request.onsuccess = () => resolve(request.result);
-            });
-        }
-
-        async clear(storeName) {
-            return new Promise((resolve, reject) => {
-                const transaction = this.db.transaction([storeName], 'readwrite');
-                const store = transaction.objectStore(storeName);
-                const request = store.clear();
-                
-                request.onerror = () => reject(request.error);
-                request.onsuccess = () => resolve(request.result);
-            });
-        }
+    
+    
+    
+    
+    
+    class SupabaseDatabase {
+    constructor() {
+        this.client = supabase;
     }
+
+    async init() {
+        // Проверяем подключение
+        const { data, error } = await this.client.from('problems').select('id').limit(1);
+        if (error) {
+            console.error('Supabase connection error:', error);
+            throw error;
+        }
+        return true;
+    }
+
+    async add(storeName, data) {
+        const { data: result, error } = await this.client
+            .from(storeName)
+            .insert([data])
+            .select();
+        
+        if (error) throw error;
+        return result[0];
+    }
+
+    async get(storeName, key) {
+        const { data, error } = await this.client
+            .from(storeName)
+            .select('*')
+            .eq('id', key)
+            .single();
+        
+        if (error && error.code !== 'PGRST116') throw error;
+        return data;
+    }
+
+    async getAll(storeName, indexName = null, query = null) {
+        let request = this.client.from(storeName).select('*');
+        
+        if (indexName && query) {
+            request = request.eq(indexName, query);
+        }
+        
+        const { data, error } = await request;
+        if (error) throw error;
+        return data || [];
+    }
+
+    async update(storeName, data) {
+        const { data: result, error } = await this.client
+            .from(storeName)
+            .update(data)
+            .eq('id', data.id)
+            .select();
+        
+        if (error) throw error;
+        return result[0];
+    }
+
+    async delete(storeName, key) {
+        const { error } = await this.client
+            .from(storeName)
+            .delete()
+            .eq('id', key);
+        
+        if (error) throw error;
+        return true;
+    }
+
+    async clear(storeName) {
+        const { error } = await this.client
+            .from(storeName)
+            .delete()
+            .neq('id', 0); // Удаляем все записи
+        
+        if (error) throw error;
+        return true;
+    }
+}
 
     // Глобальные переменные
     const forumDB = new ForumDatabase();
@@ -350,51 +343,56 @@ function loadProblems(problemsArray = problems) {
 
     // Инициализация данных
     async function initializeData() {
-        showLoading();
-        try {
-            await forumDB.init();
+    showLoading();
+    try {
+        await forumDB.init();
+        await checkSession(); // Проверяем сессию
+        
+        // Загружаем пользователей
+        const { data: storedUsers, error: usersError } = await supabase
+            .from('users')
+            .select('*');
+        
+        users = storedUsers || [];
+
+        // Загружаем задачи
+        const { data: storedProblems, error: problemsError } = await supabase
+            .from('problems')
+            .select('*')
+            .order('created_at', { ascending: false });
+
+        problems = storedProblems || [];
+
+        // Инициализируем default значения
+        problems.forEach(problem => {
+            if (!problem.likes) problem.likes = [];
+            if (!problem.dislikes) problem.dislikes = [];
+            if (!problem.images) problem.images = [];
+            if (!problem.favorites) problem.favorites = [];
+            if (!problem.bestSolutionId) problem.bestSolutionId = null;
+            if (!problem.solutions) problem.solutions = [];
+            if (!problem.comments) problem.comments = [];
             
-            const storedUsers = await forumDB.getAll('users');
-            users = storedUsers || [];
-            
-            const storedProblems = await forumDB.getAll('problems');
-            problems = storedProblems || [];
-            
-            problems.forEach(problem => {
-                if (!problem.likes) problem.likes = [];
-                if (!problem.dislikes) problem.dislikes = [];
-                if (!problem.images) problem.images = [];
-                if (!problem.favorites) problem.favorites = [];
-                if (!problem.bestSolutionId) problem.bestSolutionId = null;
-                if (!problem.solutions) problem.solutions = [];
-                if (!problem.comments) problem.comments = [];
-                
-                problem.solutions.forEach(solution => {
-                    if (!solution.likes) solution.likes = [];
-                    if (!solution.dislikes) solution.dislikes = [];
-                    if (!solution.images) solution.images = [];
-                });
-                
-                problem.comments.forEach(comment => {
-                    if (!comment.likes) comment.likes = [];
-                    if (!comment.dislikes) comment.dislikes = [];
-                    if (!comment.images) comment.images = [];
-                });
+            problem.solutions.forEach(solution => {
+                if (!solution.likes) solution.likes = [];
+                if (!solution.dislikes) solution.dislikes = [];
+                if (!solution.images) solution.images = [];
             });
             
-            const savedUser = localStorage.getItem('current_user');
-            if (savedUser) {
-                currentUser = JSON.parse(savedUser);
-            }
-            hideLoading();
-            
-        } catch (error) {
-            console.error('Error initializing data:', error);
-            hideLoading();
-            users = [];
-            problems = [];
-        }
+            problem.comments.forEach(comment => {
+                if (!comment.likes) comment.likes = [];
+                if (!comment.dislikes) comment.dislikes = [];
+                if (!comment.images) comment.images = [];
+            });
+        });
+
+    } catch (error) {
+        console.error('Error initializing data:', error);
+        users = [];
+        problems = [];
     }
+    hideLoading();
+}
 
     // Функции для работы с задачами
     async function addProblem() {
@@ -459,7 +457,12 @@ function loadProblems(problemsArray = problems) {
                     bestSolutionId: null
                 };
                 
-                await forumDB.add('problems', newProblem);
+                const { data: addedProblem, error } = await supabase
+    .from('problems')
+    .insert([newProblem])
+    .select();
+if (error) throw error;
+problems.push(addedProblem[0]);
                 problems.push(newProblem);
                 
                 document.getElementById('problem-title').value = '';
@@ -659,7 +662,10 @@ function loadProblems(problemsArray = problems) {
             
             problem.solutions.splice(solutionIndex, 1);
             
-            await forumDB.update('problems', problem);
+            const { error } = await supabase
+    .from('problems')
+    .update({ solutions: problem.solutions })
+    .eq('id', problem.id);
             
             showProblemDetail(problemId);
             updateCounters();
@@ -942,88 +948,63 @@ document.getElementById('problem-content').addEventListener('input', function() 
 
     // Функции для работы с пользователями
     async function register() {
-        const name = document.getElementById('register-name').value;
-        const email = document.getElementById('register-email').value;
-        const password = document.getElementById('register-password').value;
-        const passwordConfirm = document.getElementById('register-password-confirm').value;
-        const errorElement = document.getElementById('register-error');
-        
-        // Очищаем предыдущие ошибки
-        document.getElementById('register-password-error').textContent = '';
-        errorElement.textContent = '';
-        
-        if (!name || !email || !password || !passwordConfirm) {
-            errorElement.textContent = 'Заполните все поля';
-            return;
-        }
-        
-        // Проверяем длину имени
-            if (name.length > 40) {
-                errorElement.textContent = 'Имя пользователя должно быть не длиннее 40 символов';
-                return;
-            }
-            
-            // Проверяем сложность пароля
-            if (!validatePassword(password)) {
-                document.getElementById('register-password-error').textContent = 
-                    'Пароль не соответствует требованиям';
-                return;
-            }
-        
-        if (password !== passwordConfirm) {
-            errorElement.textContent = 'Пароли не совпадают';
-            return;
-        }
-        
-        if (users.some(u => u.email === email)) {
-            errorElement.textContent = 'Пользователь с таким email уже существует';
-            return;
-        }
-        
-        if (users.some(u => u.name.toLowerCase() === name.toLowerCase())) {
-            errorElement.textContent = 'Пользователь с таким именем уже существует';
-            return;
-        }
-        
-        showLoading();
-        
-        try {
-            const newUser = {
-                id: Date.now(),
-                name: name,
-                email: email,
-                password: password,
-                registrationDate: new Date().toLocaleDateString('ru-RU'),
-                description: ''
-            };
-            
-            await forumDB.add('users', newUser);
-            users.push(newUser);
-            
-            currentUser = {
-                id: newUser.id,
-                name: newUser.name,
-                email: newUser.email,
-                registrationDate: newUser.registrationDate,
-                description: newUser.description
-            };
-            
-            localStorage.setItem('current_user', JSON.stringify(currentUser));
-            
-            checkAuthState();
-            hideAuthModal();
-            showProblemsList();
-            showSuccessMessage(`Регистрация успешна! Добро пожаловать, ${name}!`);
-            
-        } catch (error) {
-            console.error('Ошибка при регистрации:', error);
-            errorElement.textContent = 'Ошибка при регистрации. Попробуйте еще раз.';
-        } finally {
-        hideLoading();
-        
-        
-        }
+    const name = document.getElementById('register-name').value;
+    const email = document.getElementById('register-email').value;
+    const password = document.getElementById('register-password').value;
+    const passwordConfirm = document.getElementById('register-password-confirm').value;
+    
+    // Валидация
+    if (password !== passwordConfirm) {
+        showSuccessMessage('Пароли не совпадают');
+        return;
     }
+
+    showLoading();
+    try {
+        // Регистрация в Supabase Auth
+        const { data: authData, error: authError } = await supabase.auth.signUp({
+            email: email,
+            password: password,
+        });
+
+        if (authError) throw authError;
+
+        // Создаем запись пользователя в таблице users
+        const newUser = {
+            id: authData.user.id,
+            name: name,
+            email: email,
+            password: password, // В реальном приложении не храните пароли!
+            registration_date: new Date().toLocaleDateString('ru-RU'),
+            description: ''
+        };
+
+        const { data: userData, error: userError } = await supabase
+            .from('users')
+            .insert([newUser])
+            .select();
+
+        if (userError) throw userError;
+
+        currentUser = {
+            id: userData[0].id,
+            name: userData[0].name,
+            email: userData[0].email,
+            registrationDate: userData[0].registration_date,
+            description: userData[0].description
+        };
+
+        localStorage.setItem('current_user', JSON.stringify(currentUser));
+        checkAuthState();
+        hideAuthModal();
+        showSuccessMessage(`Регистрация успешна! Добро пожаловать, ${name}!`);
+        
+    } catch (error) {
+        console.error('Ошибка регистрации:', error);
+        showSuccessMessage(error.message);
+    }
+    hideLoading();
+}
 
     async function deleteAccount() {
         if (!currentUser) return;
@@ -1690,51 +1671,58 @@ function setupSearchHandlers() {
         document.getElementById(`${tab}-form`).classList.add('active');
     }
 
-    function login() {
-        const email = document.getElementById('login-email').value;
-        const password = document.getElementById('login-password').value;
-        const errorElement = document.getElementById('login-error');
-        
-        if (!email || !password) {
-            errorElement.textContent = 'Заполните все поля';
-            return;
-        }
-        
-        const user = users.find(u => u.email === email && u.password === password);
-        
-        
-        if (user) {
-        showLoading();
-            currentUser = {
-                id: user.id,
-                name: user.name,
-                email: user.email,
-                registrationDate: user.registrationDate,
-                description: user.description || ''
-            };
-            
-            localStorage.setItem('current_user', JSON.stringify(currentUser));
-            checkAuthState();
-            hideAuthModal();
-            showProblemsList();
-            setActiveNav(document.getElementById('nav-problems'));
-            showSuccessMessage(`Добро пожаловать, ${user.name}!`);
-            location.reload();
-        } else {
-            errorElement.textContent = 'Неверный email или пароль';
-        }
-        hideLoading();
-        
-    }
+    async function login() {
+    const email = document.getElementById('login-email').value;
+    const password = document.getElementById('login-password').value;
 
-    function logout() {
-        currentUser = null;
-        localStorage.removeItem('current_user');
+    showLoading();
+    try {
+        // Аутентификация в Supabase
+        const { data: authData, error: authError } = await supabase.auth.signInWithPassword({
+            email: email,
+            password: password,
+        });
+
+        if (authError) throw authError;
+
+        // Получаем данные пользователя
+        const { data: userData, error: userError } = await supabase
+            .from('users')
+            .select('*')
+            .eq('id', authData.user.id)
+            .single();
+
+        if (userError) throw userError;
+
+        currentUser = {
+            id: userData.id,
+            name: userData.name,
+            email: userData.email,
+            registrationDate: userData.registration_date,
+            description: userData.description
+        };
+
+        localStorage.setItem('current_user', JSON.stringify(currentUser));
         checkAuthState();
-        showSuccessMessage('Вы вышли из аккаунта');
-        showProblemsList();
-        location.reload();
+        hideAuthModal();
+        showSuccessMessage(`Добро пожаловать, ${userData.name}!`);
+        
+    } catch (error) {
+        console.error('Ошибка входа:', error);
+        showSuccessMessage(error.message);
     }
+    hideLoading();
+}
+
+    async function logout() {
+    const { error } = await supabase.auth.signOut();
+    if (error) console.error('Ошибка выхода:', error);
+    
+    currentUser = null;
+    localStorage.removeItem('current_user');
+    checkAuthState();
+    showSuccessMessage('Вы вышли из аккаунта');
+}
 
     function checkAuthState() {
         if (currentUser) {
@@ -1786,6 +1774,31 @@ function setupSearchHandlers() {
             }
         }
     }
+    
+    // Проверка сессии при загрузке
+async function checkSession() {
+    const { data: { session } } = await supabase.auth.getSession();
+    if (session && !currentUser) {
+        // Пользователь уже авторизован, загружаем его данные
+        const { data: userData } = await supabase
+            .from('users')
+            .select('*')
+            .eq('id', session.user.id)
+            .single();
+            
+        if (userData) {
+            currentUser = {
+                id: userData.id,
+                name: userData.name,
+                email: userData.email,
+                registrationDate: userData.registration_date,
+                description: userData.description
+            };
+            localStorage.setItem('current_user', JSON.stringify(currentUser));
+        }
+    }
+    checkAuthState();
+}
 
     // Функция удаления текуной задачи (из детального просмотра)
     function deleteCurrentProblem() {
@@ -5807,4 +5820,4 @@ $\int_{-\infty}^{+\infty} e^{-x^2}  \, dx = \sqrt{π}$ вместо ∫ (-∞ �
 
 
 </body>
-  </html>
+    </html>
