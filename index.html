@@ -5,7 +5,6 @@
     <meta name="viewport" content="width=device-width, initial-scale=0.8">
     <title>Сайт-форум MathProj</title>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
-    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
     <script type="text/x-mathjax-config">
         MathJax.Hub.Config({
             tex2jax: {
@@ -22,348 +21,286 @@
     </script>
     
     <script src="https://cdnjs.cloudflare.com/ajax/libs/mathjax/2.7.9/MathJax.js?config=TeX-AMS-MML_HTMLorMML"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2" defer></script>
 
     <script>
-        // Конфигурация Supabase
-        const SUPABASE_URL = 'https://icinmrmefhqavemeeexz.supabase.co';
-        const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImljaW5tcm1lZmhxYXZlbWVlZXh6Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjAyNTM1MTEsImV4cCI6MjA3NTgyOTUxMX0.Boza1RmPpeKEiDBLj48Wh5aEzSCikwSSbITOgDc78mU';
+        // Объявляем переменную глобально, но не инициализируем сразу
+let supabase;
 
-        // Инициализация Supabase клиента
-        const supabase = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
-    </script>
-    
-    <script>
+// Функция для инициализации Supabase
+function initializeSupabase() {
+    try {
+        const supabaseUrl = 'https://icinmrmefhqavemeeexz.supabase.co';
+        const supabaseKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImljaW5tcm1lZmhxYXZlbWVlZXh6Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjAyNTM1MTEsImV4cCI6MjA3NTgyOTUxMX0.Boza1RmPpeKEiDBLj48Wh5aEzSCikwSSbITOgDc78mU';
         
-        // Добавьте в начало скрипта
-supabase.auth.onAuthStateChange((event, session) => {
-    if (event === 'SIGNED_OUT') {
-        currentUser = null;
-        localStorage.removeItem('current_user');
-        checkAuthState();
-    }
-});
-        
-        let loadingPromise = null;
-
-function showLoading() {
-    document.getElementById('loading-overlay').style.display = 'flex';
-    
-    // Создаем промис, который разрешится через 2 секунды
-    loadingPromise = new Promise(resolve => {
-        setTimeout(() => {
-            loadingPromise = null;
-            resolve();
-        }, 2000);
-    });
-}
-
-async function hideLoading() {
-    if (loadingPromise) {
-        // Ждем, пока промис разрешится (пройдет 2 секунды)
-        await loadingPromise;
-    }
-    document.getElementById('loading-overlay').style.display = 'none';
-}
-
-    
-    
-    
-    
-    
-    class SupabaseDatabase {
-    constructor() {
-        this.client = supabase;
-    }
-
-    async init() {
-        // Проверяем подключение
-        const { data, error } = await this.client.from('problems').select('id').limit(1);
-        if (error) {
-            console.error('Supabase connection error:', error);
-            throw error;
-        }
-        return true;
-    }
-
-    async add(storeName, data) {
-        const { data: result, error } = await this.client
-            .from(storeName)
-            .insert([data])
-            .select();
-        
-        if (error) throw error;
-        return result[0];
-    }
-
-    async get(storeName, key) {
-        const { data, error } = await this.client
-            .from(storeName)
-            .select('*')
-            .eq('id', key)
-            .single();
-        
-        if (error && error.code !== 'PGRST116') throw error;
-        return data;
-    }
-
-    async getAll(storeName, indexName = null, query = null) {
-        let request = this.client.from(storeName).select('*');
-        
-        if (indexName && query) {
-            request = request.eq(indexName, query);
+        // Проверяем, что библиотека Supabase загружена
+        if (typeof window.supabase === 'undefined') {
+            console.error('Библиотека Supabase не загружена');
+            showSuccessMessage('Ошибка загрузки библиотеки Supabase');
+            return false;
         }
         
-        const { data, error } = await request;
-        if (error) throw error;
-        return data || [];
-    }
-
-    async update(storeName, data) {
-        const { data: result, error } = await this.client
-            .from(storeName)
-            .update(data)
-            .eq('id', data.id)
-            .select();
-        
-        if (error) throw error;
-        return result[0];
-    }
-
-    async delete(storeName, key) {
-        const { error } = await this.client
-            .from(storeName)
-            .delete()
-            .eq('id', key);
-        
-        if (error) throw error;
+        supabase = window.supabase.createClient(supabaseUrl, supabaseKey);
+        console.log('Supabase успешно инициализирован');
         return true;
-    }
-
-    async clear(storeName) {
-        const { error } = await this.client
-            .from(storeName)
-            .delete()
-            .neq('id', 0); // Удаляем все записи
-        
-        if (error) throw error;
-        return true;
+    } catch (error) {
+        console.error('Ошибка при инициализации Supabase:', error);
+        showSuccessMessage(`Ошибка инициализации базы данных: ${error.message}`);
+        return false;
     }
 }
+
+        function showLoading() {
+            document.getElementById('loading-overlay').style.display = 'flex';
+            
+            loadingPromise = new Promise(resolve => {
+                setTimeout(() => {
+                    loadingPromise = null;
+                    resolve();
+                }, 2000);
+            });
+        }
+
+        async function hideLoading() {
+            if (loadingPromise) {
+                await loadingPromise;
+            }
+            document.getElementById('loading-overlay').style.display = 'none';
+        }
 
     // Глобальные переменные
-    const forumDB = new ForumDatabase();
-    let currentProblemId = null;
-    let problems = [];
-    let currentUser = null;
-    let users = [];
-    let currentSort = 'date';
-    let currentPage = 1;
-    const problemsPerPage = 10;
-    let totalPages = 1;
-    let currentProblems = [];
-    let searchResults = [];
-    let isSearchActive = false;
+        let currentProblemId = null;
+        let problems = [];
+        let currentUser = null;
+        let users = [];
+        let currentSort = 'date';
+        let currentPage = 1;
+        const problemsPerPage = 10;
+        let totalPages = 1;
+        let currentProblems = [];
+        let searchResults = [];
+        let isSearchActive = false;
 
-    // Константы для ограничений
-    const MAX_IMAGE_SIZE = 2 * 1024 * 1024;
-    const MAX_IMAGE_DIMENSION = 2000;
-    const MAX_IMAGES_PER_ITEM = 1;
+        // Константы для ограничений
+        const MAX_IMAGE_SIZE = 2 * 1024 * 1024;
+        const MAX_IMAGE_DIMENSION = 2000;
+        const MAX_IMAGES_PER_ITEM = 1;
 
-    // Флаг для отслеживания инициализации
-    let isInitialized = false;
+        // Флаг для отслеживания инициализации
+        let isInitialized = false;
 
-    // Функция загрузки задач (с пагинацией)
-function loadProblems(problemsArray = problems) {
-    const problemsList = document.getElementById('problems-list');
-    problemsList.innerHTML = '<h2 class="section-title"><i class="fas fa-tasks"></i>Задачи</h2>';
-    
-    // ИСПРАВЛЕНИЕ: правильная логика определения отображаемых задач
-    if (isSearchActive && searchResults.length > 0) {
-        currentProblems = searchResults;
-    } else {
-        currentProblems = problemsArray;
-        // Сбрасываем флаг поиска, если передан новый массив
-        isSearchActive = false;
-    }
-    
-    calculateTotalPages(currentProblems);
-    
-    if (currentProblems.length === 0) {
-        problemsList.innerHTML += `
-            <div class="empty-state">
-                <i class="fas fa-clipboard-list"></i>
-                <h3>Пока нет добавленных задач</h3>
-                <p>Будьте первым, кто добавит задачу!</p>
-            </div>
-        `;
-        
-        document.getElementById('pagination-container').style.display = 'none';
-        document.getElementById('pagination-top-container').style.display = 'none';
-        return;
-    }
-    
-    // ИСПРАВЛЕНИЕ: сортируем currentProblems, а не problemsArray
-    const sortedProblems = sortProblems([...currentProblems]);
-    const startIndex = (currentPage - 1) * problemsPerPage;
-    const endIndex = startIndex + problemsPerPage;
-    const problemsToShow = sortedProblems.slice(startIndex, endIndex);
-    
-    problemsToShow.forEach(problem => {
-        const problemEl = document.createElement('div');
-        problemEl.className = 'problem';
-        
-        let difficultyClass = '';
-        if (problem.difficulty === 'легкая') difficultyClass = 'difficulty-easy';
-        if (problem.difficulty === 'средняя') difficultyClass = 'difficulty-medium';
-        if (problem.difficulty === 'сложная') difficultyClass = 'difficulty-hard';
-        
-        const userLiked = currentUser && problem.likes.includes(currentUser.id);
-        const userDisliked = currentUser && problem.dislikes.includes(currentUser.id);
-        const isFavorited = currentUser && problem.favorites && problem.favorites.includes(currentUser.id);
-        
-        let imagePreview = '';
-        if (problem.images && problem.images.length > 0) {
-            const imageContainer = document.createElement('div');
-            imageContainer.className = 'attached-images';
+        // Функция загрузки задач (с пагинацией)
+        function loadProblems(problemsArray = problems) {
+            const problemsList = document.getElementById('problems-list');
+            problemsList.innerHTML = '<h2 class="section-title"><i class="fas fa-tasks"></i>Задачи</h2>';
             
-            const img = document.createElement('img');
-            img.src = problem.images[0].data;
-            img.className = 'attached-image';
-            img.onclick = function() {
-                openImageModal(problem.images[0].data);
-            };
-            imageContainer.appendChild(img);
-            
-            if (problem.images.length > 1) {
-                const span = document.createElement('span');
-                span.textContent = `+${problem.images.length - 1} изображений`;
-                imageContainer.appendChild(span);
+            if (isSearchActive && searchResults.length > 0) {
+                currentProblems = searchResults;
+            } else {
+                currentProblems = problemsArray;
+                isSearchActive = false;
             }
             
-            imagePreview = imageContainer.outerHTML;
-        }
-        
-        const canDelete = currentUser && (problem.authorId === currentUser.id || isAdmin(currentUser));
-    
-        problemEl.innerHTML = `
-            <div style="display: flex; justify-content: space-between; align-items: flex-start;">
-                <h3>${escapeHtml(problem.title)}</h3>
-                <button class="favorite-btn ${isFavorited ? 'favorited' : ''}" data-id="${problem.id}" title="${isFavorited ? 'Удалить из избранного' : 'Добавить в избранное'}">
-                    <i class="${isFavorited ? 'fas' : 'far'} fa-star"></i>
-                </button>
-            </div>
-            <p>${escapeHtml(problem.content.substring(0, 150))}${problem.content.length > 150 ? '...' : ''}</p>
-            ${imagePreview}
-            <div class="problem-meta">
-                <span>ID: ${problem.id}</span>
-                <span>Автор: ${escapeHtml(problem.author)}</span>
-                <span>Дата: ${problem.date}</span>
-                <span class="${difficultyClass}">Сложность: ${problem.difficulty}</span>
-            </div>
-            <div>
-                ${problem.tags.map(tag => `<span class="tag">${escapeHtml(tag)}</span>`).join('')}
-            </div>
-            <div class="reactions">
-                <button class="reaction-btn ${userLiked ? 'liked' : ''}" data-type="like" data-id="${problem.id}">
-                    <i class="fas fa-thumbs-up"></i>
-                    <span class="reaction-count">${problem.likes.length}</span>
-                </button>
-                <button class="reaction-btn ${userDisliked ? 'disliked' : ''}" data-type="dislike" data-id="${problem.id}">
-                    <i class="fas fa-thumbs-down"></i>
-                    <span class="reaction-count">${problem.dislikes.length}</span>
-                </button>
-            </div>
-            <div class="problem-actions">
-                <button class="btn view-problem" data-id="${problem.id}">
-                    <i class="fas fa-eye"></i> Посмотреть задачу
-                </button>
-                ${canDelete ? 
-                    `<button class="btn btn-secondary btn-sm delete-problem-list" data-id="${problem.id}">
-                        <i class="fas fa-trash"></i> Удалить
-                    </button>` : ''}
-            </div>
-        `;
-        
-        problemsList.appendChild(problemEl);
-    });
-    
-    updatePagination();
-}
-
-    // Инициализация при загрузке страницы - ТОЛЬКО ОДИН РАЗ
-    document.addEventListener('DOMContentLoaded', async function() {
-        if (isInitialized) return;
-        isInitialized = true;
-        
-        console.log('Инициализация приложения...');
-        
-        await initializeData();
-        loadProblems();
-        updateCounters();
-        setupEventListeners();
-        setupSearchHandlers();
-        showProblemsList();
-        checkAuthState();
-        setupImageUploadHandlers();
-        setupCharacterCounters();
-        
-        // Обработка MathJax
-        MathJax.Hub.Queue(function() {
-            MathJax.Hub.Register.MessageHook("Math Processing Error", function(message) {
-                console.log("MathJax error: ", message);
+            calculateTotalPages(currentProblems);
+            
+            if (currentProblems.length === 0) {
+                problemsList.innerHTML += `
+                    <div class="empty-state">
+                        <i class="fas fa-clipboard-list"></i>
+                        <h3>Пока нет добавленных задач</h3>
+                        <p>Будьте первым, кто добавит задачу!</p>
+                    </div>
+                `;
+                
+                document.getElementById('pagination-container').style.display = 'none';
+                document.getElementById('pagination-top-container').style.display = 'none';
+                return;
+            }
+            
+            const sortedProblems = sortProblems([...currentProblems]);
+            const startIndex = (currentPage - 1) * problemsPerPage;
+            const endIndex = startIndex + problemsPerPage;
+            const problemsToShow = sortedProblems.slice(startIndex, endIndex);
+            
+            problemsToShow.forEach(problem => {
+                const problemEl = document.createElement('div');
+                problemEl.className = 'problem';
+                
+                let difficultyClass = '';
+                if (problem.difficulty === 'легкая') difficultyClass = 'difficulty-easy';
+                if (problem.difficulty === 'средняя') difficultyClass = 'difficulty-medium';
+                if (problem.difficulty === 'сложная') difficultyClass = 'difficulty-hard';
+                
+                const userLiked = currentUser && problem.likes && problem.likes.includes(currentUser.id);
+                const userDisliked = currentUser && problem.dislikes && problem.dislikes.includes(currentUser.id);
+                const isFavorited = currentUser && problem.favorites && problem.favorites.includes(currentUser.id);
+                
+                let imagePreview = '';
+                if (problem.images && problem.images.length > 0) {
+                    const imageContainer = document.createElement('div');
+                    imageContainer.className = 'attached-images';
+                    
+                    const img = document.createElement('img');
+                    img.src = problem.images[0].data;
+                    img.className = 'attached-image';
+                    img.onclick = function() {
+                        openImageModal(problem.images[0].data);
+                    };
+                    imageContainer.appendChild(img);
+                    
+                    if (problem.images.length > 1) {
+                        const span = document.createElement('span');
+                        span.textContent = `+${problem.images.length - 1} изображений`;
+                        imageContainer.appendChild(span);
+                    }
+                    
+                    imagePreview = imageContainer.outerHTML;
+                }
+                
+                const canDelete = currentUser && (problem.authorId === currentUser.id || isAdmin(currentUser));
+            
+                problemEl.innerHTML = `
+                    <div style="display: flex; justify-content: space-between; align-items: flex-start;">
+                        <h3>${escapeHtml(problem.title)}</h3>
+                        <button class="favorite-btn ${isFavorited ? 'favorited' : ''}" data-id="${problem.id}" title="${isFavorited ? 'Удалить из избранного' : 'Добавить в избранное'}">
+                            <i class="${isFavorited ? 'fas' : 'far'} fa-star"></i>
+                        </button>
+                    </div>
+                    <p>${escapeHtml(problem.content.substring(0, 150))}${problem.content.length > 150 ? '...' : ''}</p>
+                    ${imagePreview}
+                    <div class="problem-meta">
+                        <span>ID: ${problem.id}</span>
+                        <span>Автор: ${escapeHtml(problem.author)}</span>
+                        <span>Дата: ${problem.date}</span>
+                        <span class="${difficultyClass}">Сложность: ${problem.difficulty}</span>
+                    </div>
+                    <div>
+                        ${problem.tags ? problem.tags.map(tag => `<span class="tag">${escapeHtml(tag)}</span>`).join('') : ''}
+                    </div>
+                    <div class="reactions">
+                        <button class="reaction-btn ${userLiked ? 'liked' : ''}" data-type="like" data-id="${problem.id}">
+                            <i class="fas fa-thumbs-up"></i>
+                            <span class="reaction-count">${problem.likes ? problem.likes.length : 0}</span>
+                        </button>
+                        <button class="reaction-btn ${userDisliked ? 'disliked' : ''}" data-type="dislike" data-id="${problem.id}">
+                            <i class="fas fa-thumbs-down"></i>
+                            <span class="reaction-count">${problem.dislikes ? problem.dislikes.length : 0}</span>
+                        </button>
+                    </div>
+                    <div class="problem-actions">
+                        <button class="btn view-problem" data-id="${problem.id}">
+                            <i class="fas fa-eye"></i> Посмотреть задачу
+                        </button>
+                        ${canDelete ? 
+                            `<button class="btn btn-secondary btn-sm delete-problem-list" data-id="${problem.id}">
+                                <i class="fas fa-trash"></i> Удалить
+                            </button>` : ''}
+                    </div>
+                `;
+                
+                problemsList.appendChild(problemEl);
             });
             
-            function updateMathJax() {
-                MathJax.Hub.Queue(["Typeset", MathJax.Hub]);
-            }
+            updatePagination();
+        }
 
-            const observer = new MutationObserver(function(mutations) {
-                let shouldUpdate = false;
+        // Инициализация при загрузке страницы
+        document.addEventListener('DOMContentLoaded', async function() {
+            if (isInitialized) return;
+            isInitialized = true;
+            
+            console.log('Инициализация приложения...');
+            
+            // Сначала инициализируем Supabase
+    const supabaseInitialized = initializeSupabase();
+    if (!supabaseInitialized) {
+        console.error('Приложение не может работать без Supabase');
+        return;
+    }
+        
+            await initializeData();
+            loadProblems();
+            updateCounters();
+            setupEventListeners();
+            setupSearchHandlers();
+            showProblemsList();
+            checkAuthState();
+            setupImageUploadHandlers();
+            setupCharacterCounters();            
+        
+            // Обработка MathJax
+            MathJax.Hub.Queue(function() {
+                MathJax.Hub.Register.MessageHook("Math Processing Error", function(message) {
+                    console.log("MathJax error: ", message);
+                });
                 
-                mutations.forEach(function(mutation) {
-                    if (mutation.type === 'characterData' || mutation.addedNodes.length > 0) {
-                        shouldUpdate = true;
+                function updateMathJax() {
+                    MathJax.Hub.Queue(["Typeset", MathJax.Hub]);
+                }
+
+                const observer = new MutationObserver(function(mutations) {
+                    let shouldUpdate = false;
+                    
+                    mutations.forEach(function(mutation) {
+                        if (mutation.type === 'characterData' || mutation.addedNodes.length > 0) {
+                            shouldUpdate = true;
+                        }
+                    });
+
+                    if (shouldUpdate) {
+                        setTimeout(updateMathJax, 1);
                     }
                 });
 
-                if (shouldUpdate) {
-                    setTimeout(updateMathJax, 1);
-                }
-            });
+                observer.observe(document.body, {
+                    childList: true,
+                    subtree: true,
+                    characterData: true
+                });
 
-            observer.observe(document.body, {
-                childList: true,
-                subtree: true,
-                characterData: true
+                updateMathJax();
             });
-
-            updateMathJax();
         });
-    });
 
-    // Инициализация данных
-    async function initializeData() {
+        // Инициализация данных из Supabase
+async function initializeData() {
+    // Проверяем инициализацию Supabase
+    if (!supabase) {
+        const initialized = initializeSupabase();
+        if (!initialized) {
+            console.error('Не удалось инициализировать Supabase');
+            hideLoading();
+            return;
+        }
+    }
+    
     showLoading();
     try {
-        await forumDB.init();
-        await checkSession(); // Проверяем сессию
-        
-        // Загружаем пользователей
-        const { data: storedUsers, error: usersError } = await supabase
+        // Загрузка пользователей
+        const { data: usersData, error: usersError } = await supabase
             .from('users')
             .select('*');
         
-        users = storedUsers || [];
-
-        // Загружаем задачи
-        const { data: storedProblems, error: problemsError } = await supabase
+        if (usersError) {
+            console.error('Ошибка загрузки пользователей:', usersError);
+            users = [];
+        } else {
+            users = usersData || [];
+        }
+        
+        // Загрузка задач
+        const { data: problemsData, error: problemsError } = await supabase
             .from('problems')
-            .select('*')
-            .order('created_at', { ascending: false });
-
-        problems = storedProblems || [];
-
-        // Инициализируем default значения
+            .select('*');
+        
+        if (problemsError) {
+            console.error('Ошибка загрузки задач:', problemsError);
+            problems = [];
+        } else {
+            problems = problemsData || [];
+        }
+        
+        // Инициализация отсутствующих полей
         problems.forEach(problem => {
             if (!problem.likes) problem.likes = [];
             if (!problem.dislikes) problem.dislikes = [];
@@ -385,41 +322,46 @@ function loadProblems(problemsArray = problems) {
                 if (!comment.images) comment.images = [];
             });
         });
-
+        
+        // Восстановление сессии пользователя
+        const savedUser = localStorage.getItem('current_user');
+        if (savedUser) {
+            currentUser = JSON.parse(savedUser);
+        }
+        hideLoading();
+        
     } catch (error) {
         console.error('Error initializing data:', error);
+        hideLoading();
         users = [];
         problems = [];
     }
-    hideLoading();
 }
 
-    // Функции для работы с задачами
-    async function addProblem() {
-        if (!currentUser) {
-            showAuthModal();
-            return;
-        }
-        
-        const title = document.getElementById('problem-title').value;
-        const content = document.getElementById('problem-content').value;
-        const tags = document.getElementById('problem-tags').value;
-        const difficulty = document.getElementById('problem-difficulty').value;
-        const imageFiles = document.getElementById('problem-images').files;
-        
-        // Валидация длины названия
+        // Функции для работы с задачами
+        async function addProblem() {
+            if (!currentUser) {
+                showAuthModal();
+                return;
+            }
+            
+            const title = document.getElementById('problem-title').value;
+            const content = document.getElementById('problem-content').value;
+            const tags = document.getElementById('problem-tags').value;
+            const difficulty = document.getElementById('problem-difficulty').value;
+            const imageFiles = document.getElementById('problem-images').files;
+            
+            // Валидация
             if (title.length < 5 || title.length > 200) {
                 showSuccessMessage('Название задачи должно содержать от 5 до 200 символов');
                 return;
             }
             
-            // Валидация длины условия
             if (content.length < 10 || content.length > 2000) {
                 showSuccessMessage('Условие задачи должно содержать от 10 до 2000 символов');
                 return;
             }
             
-            // Валидация тегов
             const tagArray = tags.split(',').map(tag => tag.trim()).filter(tag => tag !== '');
             if (tagArray.length > 10) {
                 showSuccessMessage('Можно указать не более 10 тегов');
@@ -433,393 +375,450 @@ function loadProblems(problemsArray = problems) {
                 }
             }
         
-        if (title && content) {
-        
-        showLoading();
-            try {
-                const images = await readImageFiles(imageFiles);
-                
-                const newProblem = {
-                    id: Date.now(),
-                    title: title,
-                    content: content,
-                    author: currentUser.name,
-                    authorId: currentUser.id,
-                    tags: tagArray,
-                    difficulty: difficulty,
-                    date: new Date().toLocaleDateString('ru-RU'),
-                    images: images,
-                    solutions: [],
-                    comments: [],
-                    likes: [],
-                    dislikes: [],
-                    favorites: [],
-                    bestSolutionId: null
-                };
-                
-                const { data: addedProblem, error } = await supabase
-    .from('problems')
-    .insert([newProblem])
-    .select();
-if (error) throw error;
-problems.push(addedProblem[0]);
-                problems.push(newProblem);
-                
-                document.getElementById('problem-title').value = '';
-                document.getElementById('problem-content').value = '';
-                document.getElementById('problem-tags').value = '';
-                document.getElementById('problem-difficulty').value = 'легкая';
-                document.getElementById('problem-images').value = '';
-                document.getElementById('problem-file-names').textContent = '';
-                document.getElementById('problem-image-previews').innerHTML = '';
-                
-                showSuccessMessage('Ваша задача успешно добавлена!');
-                currentPage = 1;
-                loadProblems();
-                updateCounters();
-                showProblemsList();
-                setActiveNav(document.getElementById('nav-problems'));
-                
-            } catch (error) {
-                console.error('Ошибка при добавлении задачи:', error);
-                alert('Произошла ошибка при добавлении задачи. Пожалуйста, попробуйте еще раз.');
-            }
-        } else {
-            alert('Пожалуйста, заполните все обязательные поля');
+            if (title && content) {
+                showLoading();
+                try {
+                    const images = await readImageFiles(imageFiles);
+                    
+                    const newProblem = {
+                        id: Date.now(),
+                        title: title,
+                        content: content,
+                        author: currentUser.name,
+                        authorId: currentUser.id,
+                        tags: tagArray,
+                        difficulty: difficulty,
+                        date: new Date().toLocaleDateString('ru-RU'),
+                        images: images,
+                        solutions: [],
+                        comments: [],
+                        likes: [],
+                        dislikes: [],
+                        favorites: [],
+                        bestSolutionId: null
+                    };
+                    
+                    // Сохранение в Supabase
+                    const { data, error } = await supabase
+                        .from('problems')
+                        .insert([newProblem])
+                        .select();
+                    
+                    if (error) throw error;
+                    
+                    problems.push(newProblem);
+                    
+                    // Очистка формы
+                    document.getElementById('problem-title').value = '';
+                    document.getElementById('problem-content').value = '';
+                    document.getElementById('problem-tags').value = '';
+                    document.getElementById('problem-difficulty').value = 'легкая';
+                    document.getElementById('problem-images').value = '';
+                    document.getElementById('problem-file-names').textContent = '';
+                    document.getElementById('problem-image-previews').innerHTML = '';
+                    
+                    showSuccessMessage('Ваша задача успешно добавлена!');
+                    currentPage = 1;
+                    loadProblems();
+                    updateCounters();
+                    showProblemsList();
+                    setActiveNav(document.getElementById('nav-problems'));
+                    
+                } catch (error) {
+                    console.error('Ошибка при добавлении задачи:', error);
+                    alert('Произошла ошибка при добавлении задачи. Пожалуйста, попробуйте еще раз.');
+                }
+            } else {
+                alert('Пожалуйста, заполните все обязательные поля');
             } 
-                hideLoading();
-        
-    }
-
-    async function addSolution() {
-        if (!currentUser) {
-            showAuthModal();
-            return;
+            hideLoading();
         }
-        
-        if (!currentProblemId) return;
-        
-        const content = document.getElementById('solution-content').value;
-        const imageFiles = document.getElementById('solution-images').files;
-        
-        // Валидация длины решения
+
+        async function addSolution() {
+            if (!currentUser) {
+                showAuthModal();
+                return;
+            }
+            
+            if (!currentProblemId) return;
+            
+            const content = document.getElementById('solution-content').value;
+            const imageFiles = document.getElementById('solution-images').files;
+            
+            // Валидация
             if (content.length < 10 || content.length > 3000) {
                 showSuccessMessage('Решение должно содержать от 10 до 3000 символов');
                 return;
             }
         
-        if (content) {
-            const problem = problems.find(p => p.id === currentProblemId);
-            if (problem) {
-            
-            showLoading();
-                try {
-                    const images = await readImageFiles(imageFiles);
-                    
-                    const newSolution = {
-                        id: Date.now(),
-                        author: currentUser.name,
-                        authorId: currentUser.id,
-                        content: content,
-                        images: images,
-                        date: new Date().toLocaleDateString('ru-RU'),
-                        likes: [],
-                        dislikes: []
-                    };
-                    
-                    if (!problem.solutions) problem.solutions = [];
-                    problem.solutions.push(newSolution);
-                    
-                    await forumDB.update('problems', problem);
-                    
-                    document.getElementById('solution-content').value = '';
-                    document.getElementById('solution-images').value = '';
-                    document.getElementById('solution-file-names').textContent = '';
-                    document.getElementById('solution-image-previews').innerHTML = '';
-                    
-                    showProblemDetail(currentProblemId);
-                    updateCounters();
-                    showSuccessMessage('Решение успешно добавлено!');
-                    
-                } catch (error) {
-                    console.error('Ошибка при добавлении решения:', error);
-                    alert('Произошла ошибка при добавлении решения. Пожалуйста, попробуйте еще раз.');
+            if (content) {
+                const problem = problems.find(p => p.id === currentProblemId);
+                if (problem) {
+                    showLoading();
+                    try {
+                        const images = await readImageFiles(imageFiles);
+                        
+                        const newSolution = {
+                            id: Date.now(),
+                            author: currentUser.name,
+                            authorId: currentUser.id,
+                            content: content,
+                            images: images,
+                            date: new Date().toLocaleDateString('ru-RU'),
+                            likes: [],
+                            dislikes: []
+                        };
+                        
+                        if (!problem.solutions) problem.solutions = [];
+                        problem.solutions.push(newSolution);
+                        
+                        // Обновление в Supabase
+                        const { error } = await supabase
+                            .from('problems')
+                            .update({ solutions: problem.solutions })
+                            .eq('id', problem.id);
+                        
+                        if (error) throw error;
+                        
+                        document.getElementById('solution-content').value = '';
+                        document.getElementById('solution-images').value = '';
+                        document.getElementById('solution-file-names').textContent = '';
+                        document.getElementById('solution-image-previews').innerHTML = '';
+                        
+                        showProblemDetail(currentProblemId);
+                        updateCounters();
+                        showSuccessMessage('Решение успешно добавлено!');
+                        
+                    } catch (error) {
+                        console.error('Ошибка при добавлении решения:', error);
+                        alert('Произошла ошибка при добавлении решения. Пожалуйста, попробуйте еще раз.');
+                    }
                 }
+            } else {
+                alert('Пожалуйста, заполните поле с решением');
             }
-        } else {
-            alert('Пожалуйста, заполните поле с решением');
+            hideLoading();
         }
-        hideLoading();
-        
-    }
 
-    async function addComment() {
-        if (!currentUser) {
-            showAuthModal();
-            return;
-        }
-        
-        if (!currentProblemId) return;
-        
-        const content = document.getElementById('comment-content').value;
-        const imageFiles = document.getElementById('comment-images').files;
-        
-        // Валидация длины комментария
+        async function addComment() {
+            if (!currentUser) {
+                showAuthModal();
+                return;
+            }
+            
+            if (!currentProblemId) return;
+            
+            const content = document.getElementById('comment-content').value;
+            const imageFiles = document.getElementById('comment-images').files;
+            
+            // Валидация
             if (content.length < 10 || content.length > 3000) {
                 showSuccessMessage('Комментарий должен содержать от 10 до 3000 символов');
                 return;
             }
         
-        if (content) {
-            const problem = problems.find(p => p.id === currentProblemId);
-            if (problem) {
+            if (content) {
+                const problem = problems.find(p => p.id === currentProblemId);
+                if (problem) {
+                    showLoading();
+                    try {
+                        const images = await readImageFiles(imageFiles);
+                    
+                        const newComment = {
+                            id: Date.now(),
+                            author: currentUser.name,
+                            authorId: currentUser.id,
+                            content: content,
+                            images: images,
+                            date: new Date().toLocaleDateString('ru-RU'),
+                            likes: [],
+                            dislikes: []
+                        };
+                        
+                        if (!problem.comments) problem.comments = [];
+                        problem.comments.push(newComment);
+                        
+                        // Обновление в Supabase
+                        const { error } = await supabase
+                            .from('problems')
+                            .update({ comments: problem.comments })
+                            .eq('id', problem.id);
+                        
+                        if (error) throw error;
+                        
+                        document.getElementById('comment-content').value = '';
+                        document.getElementById('comment-images').value = '';
+                        document.getElementById('comment-file-names').textContent = '';
+                        document.getElementById('comment-image-previews').innerHTML = '';
+                        
+                        showProblemDetail(currentProblemId);
+                        updateCounters();
+                        showSuccessMessage('Комментарий успешно добавлен!');
+                    } catch (error) {
+                        console.error('Ошибка при добавлении комментария:', error);
+                        alert('Произошла ошибка при добавлении комментария. Пожалуйста, попробуйте еще раз.');
+                    }
+                }
+            } else {
+                alert('Пожалуйста, заполните поле с комментарием');
+            }
+            hideLoading();
+        }
+
+        async function deleteProblem(problemId) {
+            if (!confirm('Вы уверены, что хотите удалить задачу?')) return;
             
             showLoading();
-                try {
-                    const images = await readImageFiles(imageFiles);
-                
-                    const newComment = {
-                        id: Date.now(),
-                        author: currentUser.name,
-                        authorId: currentUser.id,
-                        content: content,
-                        images: images,
-                        date: new Date().toLocaleDateString('ru-RU'),
-                        likes: [],
-                        dislikes: []
-                    };
-                    
-                    if (!problem.comments) problem.comments = [];
-                    problem.comments.push(newComment);
-                    
-                    await forumDB.update('problems', problem);
-                    
-                    document.getElementById('comment-content').value = '';
-                    document.getElementById('comment-images').value = '';
-                    document.getElementById('comment-file-names').textContent = '';
-                    document.getElementById('comment-image-previews').innerHTML = '';
-                    
-                    showProblemDetail(currentProblemId);
-                    updateCounters();
-                    showSuccessMessage('Комментарий успешно добавлен!');
-                } catch (error) {
-                    console.error('Ошибка при добавлении комментария:', error);
-                    alert('Произошла ошибка при добавлении комментария. Пожалуйста, попробуйте еще раз.');
-                }
-            }
-        } else {
-            alert('Пожалуйста, заполните поле с комментарием');
-        
-        }
-        hideLoading();
-    }
-
-    async function deleteProblem(problemId) {
-        if (!confirm('Вы уверены, что хотите удалить задачу?')) return;
-        
-        showLoading();
-        
-        try {
-            const problemIndex = problems.findIndex(p => p.id === problemId);
             
-            if (problemIndex !== -1) {
-                await forumDB.delete('problems', problemId);
-                problems.splice(problemIndex, 1);
+            try {
+                // Удаление из Supabase
+                const { error } = await supabase
+                    .from('problems')
+                    .delete()
+                    .eq('id', problemId);
                 
-                if (currentProblemId === problemId) {
-                    showProblemsList();
-                } else {
-                    calculateTotalPages();
-                    if (currentPage > totalPages && totalPages > 0) {
-                        currentPage = totalPages;
+                if (error) throw error;
+                
+                const problemIndex = problems.findIndex(p => p.id === problemId);
+                
+                if (problemIndex !== -1) {
+                    problems.splice(problemIndex, 1);
+                    
+                    if (currentProblemId === problemId) {
+                        showProblemsList();
+                    } else {
+                        calculateTotalPages();
+                        if (currentPage > totalPages && totalPages > 0) {
+                            currentPage = totalPages;
+                        }
+                        loadProblems();
                     }
-                    loadProblems();
+                    
+                    updateCounters();
+                    showSuccessMessage('Задача удалена!');
+                }
+            } catch (error) {
+                console.error('Ошибка при удалении задачи:', error);
+                alert('Ошибка при удалении задачи.');
+            } finally {
+                hideLoading();
+            }
+        }
+
+        async function deleteSolution(problemId, solutionIndex) {
+            if (!confirm('Вы уверены, что хотите удалить решение?')) return;
+            
+            const problem = problems.find(p => p.id === problemId);
+            
+            if (problem && problem.solutions && solutionIndex < problem.solutions.length) {
+                const solution = problem.solutions[solutionIndex];
+                
+                if (problem.bestSolutionId === solution.id) {
+                    problem.bestSolutionId = null;
                 }
                 
+                problem.solutions.splice(solutionIndex, 1);
+                
+                // Обновление в Supabase
+                const { error } = await supabase
+                    .from('problems')
+                    .update({ 
+                        solutions: problem.solutions,
+                        bestSolutionId: problem.bestSolutionId
+                    })
+                    .eq('id', problem.id);
+                
+                if (error) throw error;
+                
+                showProblemDetail(problemId);
                 updateCounters();
-                showSuccessMessage('Задача удалена!');
+                showSuccessMessage('Решение удалено!');
             }
-        } catch (error) {
-            console.error('Ошибка при удалении задачи:', error);
-            alert('Ошибка при удалении задачи.');
-        } finally {
-        hideLoading();
-        
         }
-    }
 
-    async function deleteSolution(problemId, solutionIndex) {
-        if (!confirm('Вы уверены, что хотите удалить решение?')) return;
-        
-        const problem = problems.find(p => p.id === problemId);
-        
-        if (problem && problem.solutions && solutionIndex < problem.solutions.length) {
-            const solution = problem.solutions[solutionIndex];
+        async function deleteComment(problemId, commentIndex) {
+            if (!confirm('Вы уверены, что хотите удалить комментарий?')) return;
             
-            if (problem.bestSolutionId === solution.id) {
-                problem.bestSolutionId = null;
+            const problem = problems.find(p => p.id === problemId);
+            
+            if (problem && problem.comments && commentIndex < problem.comments.length) {
+                problem.comments.splice(commentIndex, 1);
+                
+                // Обновление в Supabase
+                const { error } = await supabase
+                    .from('problems')
+                    .update({ comments: problem.comments })
+                    .eq('id', problem.id);
+                
+                if (error) throw error;
+                
+                showProblemDetail(problemId);
+                updateCounters();
+                showSuccessMessage('Комментарий удален!');
             }
-            
-            problem.solutions.splice(solutionIndex, 1);
-            
-            const { error } = await supabase
-    .from('problems')
-    .update({ solutions: problem.solutions })
-    .eq('id', problem.id);
-            
-            showProblemDetail(problemId);
-            updateCounters();
-            showSuccessMessage('Решение удалено!');
         }
-    }
 
-    async function deleteComment(problemId, commentIndex) {
-        if (!confirm('Вы уверены, что хотите удалить комментарий?')) return;
-        
-        const problem = problems.find(p => p.id === problemId);
-        
-        if (problem && problem.comments && commentIndex < problem.comments.length) {
-            problem.comments.splice(commentIndex, 1);
+        async function handleReaction(itemType, problemId, solutionIndex, commentIndex, reactionType) {
+            let item;
+            let problem;
             
-            await forumDB.update('problems', problem);
-            
-            showProblemDetail(problemId);
-            updateCounters();
-            showSuccessMessage('Комментарий удален!');
-        }
-    }
-
-    async function handleReaction(itemType, problemId, solutionIndex, commentIndex, reactionType) {
-        let item;
-        let problem;
-        
-        if (itemType === 'problem') {
-            problem = problems.find(p => p.id === problemId);
-            item = problem;
-        } else if (itemType === 'solution') {
-            problem = problems.find(p => p.id === problemId);
-            if (problem && problem.solutions && solutionIndex !== null) {
-                item = problem.solutions[solutionIndex];
-            }
-        } else if (itemType === 'comment') {
-            problem = problems.find(p => p.id === problemId);
-            if (problem && problem.comments && commentIndex !== null) {
-                item = problem.comments[commentIndex];
-            }
-        }
-        
-        if (!item || !currentUser || !problem) return;
-        
-        const userId = currentUser.id;
-        const liked = item.likes.includes(userId);
-        const disliked = item.dislikes.includes(userId);
-        
-        if (reactionType === 'like') {
-            if (liked) {
-                item.likes = item.likes.filter(id => id !== userId);
-            } else {
-                item.likes.push(userId);
-                if (disliked) {
-                    item.dislikes = item.dislikes.filter(id => id !== userId);
+            if (itemType === 'problem') {
+                problem = problems.find(p => p.id === problemId);
+                item = problem;
+            } else if (itemType === 'solution') {
+                problem = problems.find(p => p.id === problemId);
+                if (problem && problem.solutions && solutionIndex !== null) {
+                    item = problem.solutions[solutionIndex];
+                }
+            } else if (itemType === 'comment') {
+                problem = problems.find(p => p.id === problemId);
+                if (problem && problem.comments && commentIndex !== null) {
+                    item = problem.comments[commentIndex];
                 }
             }
-        } else if (reactionType === 'dislike') {
-            if (disliked) {
-                item.dislikes = item.dislikes.filter(id => id !== userId);
-            } else {
-                item.dislikes.push(userId);
+            
+            if (!item || !currentUser || !problem) return;
+            
+            const userId = currentUser.id;
+            const liked = item.likes && item.likes.includes(userId);
+            const disliked = item.dislikes && item.dislikes.includes(userId);
+            
+            if (reactionType === 'like') {
                 if (liked) {
                     item.likes = item.likes.filter(id => id !== userId);
+                } else {
+                    if (!item.likes) item.likes = [];
+                    item.likes.push(userId);
+                    if (disliked) {
+                        item.dislikes = item.dislikes.filter(id => id !== userId);
+                    }
+                }
+            } else if (reactionType === 'dislike') {
+                if (disliked) {
+                    item.dislikes = item.dislikes.filter(id => id !== userId);
+                } else {
+                    if (!item.dislikes) item.dislikes = [];
+                    item.dislikes.push(userId);
+                    if (liked) {
+                        item.likes = item.likes.filter(id => id !== userId);
+                    }
                 }
             }
+            
+            // Обновление в Supabase
+            let updateData = {};
+            if (itemType === 'problem') {
+                updateData = {
+                    likes: problem.likes,
+                    dislikes: problem.dislikes
+                };
+            } else if (itemType === 'solution') {
+                updateData = { solutions: problem.solutions };
+            } else if (itemType === 'comment') {
+                updateData = { comments: problem.comments };
+            }
+            
+            const { error } = await supabase
+                .from('problems')
+                .update(updateData)
+                .eq('id', problem.id);
+            
+            if (error) throw error;
+            
+            if (itemType === 'problem') {
+                if (document.getElementById('problem-detail').style.display !== 'none') {
+                    showProblemDetail(problemId);
+                } else {
+                    loadProblems();
+                }
+            } else if (itemType === 'solution' || itemType === 'comment') {
+                showProblemDetail(problemId);
+            }
         }
-        
-        await forumDB.update('problems', problem);
-        
-        if (itemType === 'problem') {
+
+        async function toggleFavorite(problemId) {
+            if (!currentUser) {
+                showAuthModal();
+                return;
+            }
+            
+            const problem = problems.find(p => p.id === problemId);
+            if (!problem) return;
+            
+            if (!problem.favorites) {
+                problem.favorites = [];
+            }
+            
+            const userId = currentUser.id;
+            const isFavorited = problem.favorites.includes(userId);
+            
+            if (isFavorited) {
+                problem.favorites = problem.favorites.filter(id => id !== userId);
+            } else {
+                const userFavoritesCount = problems.filter(p => 
+                    p.favorites && p.favorites.includes(userId)
+                ).length;
+                
+                if (userFavoritesCount >= 50) {
+                    showSuccessMessage('Достигнут лимит избранных задач (максимум 50). Удалите некоторые задачи из избранного, чтобы добавить новые.');
+                    return;
+                }
+                
+                problem.favorites.push(userId);
+            }
+            
+            // Обновление в Supabase
+            const { error } = await supabase
+                .from('problems')
+                .update({ favorites: problem.favorites })
+                .eq('id', problem.id);
+            
+            if (error) throw error;
+            
             if (document.getElementById('problem-detail').style.display !== 'none') {
                 showProblemDetail(problemId);
             } else {
                 loadProblems();
             }
-        } else if (itemType === 'solution' || itemType === 'comment') {
-            showProblemDetail(problemId);
-        }
-    }
-
-    async function toggleFavorite(problemId) {
-        if (!currentUser) {
-            showAuthModal();
-            return;
-        }
-        
-        const problem = problems.find(p => p.id === problemId);
-        if (!problem) return;
-        
-        if (!problem.favorites) {
-            problem.favorites = [];
-        }
-        
-        const userId = currentUser.id;
-        const isFavorited = problem.favorites.includes(userId);
-        
-        if (isFavorited) {
-            problem.favorites = problem.favorites.filter(id => id !== userId);
-        } else {
-            const userFavoritesCount = problems.filter(p => 
-                p.favorites && p.favorites.includes(userId)
-            ).length;
             
-            if (userFavoritesCount >= 50) {
-                showSuccessMessage('Достигнут лимит избранных задач (максимум 50). Удалите некоторые задачи из избранного, чтобы добавить новые.');
+            if (document.getElementById('profile-section').style.display !== 'none') {
+                loadProfileData();
+            }
+            
+            const message = isFavorited ? 'Задача удалена из избранного' : 'Задача добавлена в избранное';
+            showSuccessMessage(message);
+        }
+
+        async function toggleBestSolution(problemId, solutionId) {
+            if (!currentUser) {
+                showAuthModal();
                 return;
             }
             
-            problem.favorites.push(userId);
-        }
-        
-        await forumDB.update('problems', problem);
-        
-        if (document.getElementById('problem-detail').style.display !== 'none') {
+            const problem = problems.find(p => p.id === problemId);
+            if (!problem || problem.authorId !== currentUser.id) return;
+            
+            if (problem.bestSolutionId === solutionId) {
+                problem.bestSolutionId = null;
+            } else {
+                problem.bestSolutionId = solutionId;
+            }
+            
+            // Обновление в Supabase
+            const { error } = await supabase
+                .from('problems')
+                .update({ bestSolutionId: problem.bestSolutionId })
+                .eq('id', problem.id);
+            
+            if (error) throw error;
+            
             showProblemDetail(problemId);
-        } else {
-            loadProblems();
+            
+            if (document.getElementById('profile-section').style.display !== 'none') {
+                loadProfileData();
+            }
         }
         
-        if (document.getElementById('profile-section').style.display !== 'none') {
-            loadProfileData();
-        }
-        
-        const message = isFavorited ? 'Задача удалена из избранного' : 'Задача добавлена в избранное';
-        showSuccessMessage(message);
-    }
-
-    async function toggleBestSolution(problemId, solutionId) {
-        if (!currentUser) {
-            showAuthModal();
-            return;
-        }
-        
-        const problem = problems.find(p => p.id === problemId);
-        if (!problem || problem.authorId !== currentUser.id) return;
-        
-        if (problem.bestSolutionId === solutionId) {
-            problem.bestSolutionId = null;
-        } else {
-            problem.bestSolutionId = solutionId;
-        }
-        
-        await forumDB.update('problems', problem);
-        
-        showProblemDetail(problemId);
-        
-        if (document.getElementById('profile-section').style.display !== 'none') {
-            loadProfileData();
-        }
-    }
-    
-    // Добавляем обработчики для подсчета символов
-    
         function setupCharacterCounters() {
             // Обработчик для имени при регистрации
             document.getElementById('register-name').addEventListener('input', function() {
@@ -946,160 +945,257 @@ document.getElementById('problem-content').addEventListener('input', function() 
             });
         }
 
-    // Функции для работы с пользователями
-    async function register() {
+        // Функции для работы с пользователями
+        async function register() {
     const name = document.getElementById('register-name').value;
     const email = document.getElementById('register-email').value;
     const password = document.getElementById('register-password').value;
     const passwordConfirm = document.getElementById('register-password-confirm').value;
+    const errorElement = document.getElementById('register-error');
     
-    // Валидация
-    if (password !== passwordConfirm) {
-        showSuccessMessage('Пароли не совпадают');
+    // Очищаем предыдущие ошибки
+    document.getElementById('register-password-error').textContent = '';
+    errorElement.textContent = '';
+    
+    if (!name || !email || !password || !passwordConfirm) {
+        errorElement.textContent = 'Заполните все поля';
         return;
     }
-
+    
+    // Проверяем длину имени
+    if (name.length > 40) {
+        errorElement.textContent = 'Имя пользователя должно быть не длиннее 40 символов';
+        return;
+    }
+    
+    // Проверяем сложность пароля
+    if (!validatePassword(password)) {
+        document.getElementById('register-password-error').textContent = 
+            'Пароль не соответствует требованиям';
+        return;
+    }
+    
+    if (password !== passwordConfirm) {
+        errorElement.textContent = 'Пароли не совпадают';
+        return;
+    }
+    
+    // Проверяем существование пользователя
+    const existingUser = users.find(u => u.email === email);
+    if (existingUser) {
+        errorElement.textContent = 'Пользователь с таким email уже существует';
+        return;
+    }
+    
+    const existingName = users.find(u => u.name.toLowerCase() === name.toLowerCase());
+    if (existingName) {
+        errorElement.textContent = 'Пользователь с таким именем уже существует';
+        return;
+    }
+    
     showLoading();
+    
     try {
-        // Регистрация в Supabase Auth
-        const { data: authData, error: authError } = await supabase.auth.signUp({
-            email: email,
-            password: password,
-        });
-
-        if (authError) throw authError;
-
-        // Создаем запись пользователя в таблице users
         const newUser = {
-            id: authData.user.id,
+            id: Date.now(),
             name: name,
             email: email,
-            password: password, // В реальном приложении не храните пароли!
-            registration_date: new Date().toLocaleDateString('ru-RU'),
+            password: password,
+            registrationDate: new Date().toLocaleDateString('ru-RU'),
             description: ''
         };
-
-        const { data: userData, error: userError } = await supabase
+        
+        // Сохранение в Supabase
+        const { data, error } = await supabase
             .from('users')
             .insert([newUser])
             .select();
-
-        if (userError) throw userError;
-
-        currentUser = {
-            id: userData[0].id,
-            name: userData[0].name,
-            email: userData[0].email,
-            registrationDate: userData[0].registration_date,
-            description: userData[0].description
-        };
-
+        
+        if (error) {
+            console.error('Supabase error details:', error);
+            
+            // Проверяем, связана ли ошибка с отсутствующим столбцом
+            if (error.message && error.message.includes('registrationDate')) {
+                // Создаем пользователя без registrationDate
+                const { data: simpleUser, error: simpleError } = await supabase
+                    .from('users')
+                    .insert([{
+                        id: newUser.id,
+                        name: newUser.name,
+                        email: newUser.email,
+                        password: newUser.password,
+                        description: newUser.description
+                    }])
+                    .select();
+                
+                if (simpleError) throw simpleError;
+                
+                users.push(newUser);
+                currentUser = {
+                    id: newUser.id,
+                    name: newUser.name,
+                    email: newUser.email,
+                    registrationDate: newUser.registrationDate,
+                    description: newUser.description
+                };
+            } else {
+                throw error;
+            }
+        } else {
+            users.push(newUser);
+            currentUser = {
+                id: newUser.id,
+                name: newUser.name,
+                email: newUser.email,
+                registrationDate: newUser.registrationDate,
+                description: newUser.description
+            };
+        }
+        
         localStorage.setItem('current_user', JSON.stringify(currentUser));
+        
         checkAuthState();
         hideAuthModal();
+        showProblemsList();
         showSuccessMessage(`Регистрация успешна! Добро пожаловать, ${name}!`);
         
     } catch (error) {
-        console.error('Ошибка регистрации:', error);
-        showSuccessMessage(error.message);
+        console.error('Ошибка при регистрации:', error);
+        errorElement.textContent = `Ошибка при регистрации: ${error.message}`;
+    } finally {
+        hideLoading();
     }
-    hideLoading();
 }
 
-    async function deleteAccount() {
-        if (!currentUser) return;
-        
-        if (!confirm('Вы уверены, что хотите удалить аккаунт? Это действие нельзя отменить.')) {
-            return;
-        }
-        
-        try {
-            await forumDB.delete('users', currentUser.id);
+        async function deleteAccount() {
+            if (!currentUser) return;
             
-            const userProblems = problems.filter(problem => problem.authorId === currentUser.id);
-            for (const problem of userProblems) {
-                await forumDB.delete('problems', problem.id);
+            if (!confirm('Вы уверены, что хотите удалить аккаунт? Это действие нельзя отменить.')) {
+                return;
             }
             
-            const otherProblems = problems.filter(problem => problem.authorId !== currentUser.id);
-            for (const problem of otherProblems) {
-                let updated = false;
+            try {
+                // Удаление пользователя из Supabase
+                const { error: userError } = await supabase
+                    .from('users')
+                    .delete()
+                    .eq('id', currentUser.id);
                 
-                if (problem.solutions) {
-                    const originalLength = problem.solutions.length;
-                    problem.solutions = problem.solutions.filter(solution => solution.authorId !== currentUser.id);
-                    if (problem.solutions.length !== originalLength) updated = true;
-                }
+                if (userError) throw userError;
                 
-                if (problem.comments) {
-                    const originalLength = problem.comments.length;
-                    problem.comments = problem.comments.filter(comment => comment.authorId !== currentUser.id);
-                    if (problem.comments.length !== originalLength) updated = true;
-                }
-                
-                if (problem.favorites) {
-                    const originalLength = problem.favorites.length;
-                    problem.favorites = problem.favorites.filter(id => id !== currentUser.id);
-                    if (problem.favorites.length !== originalLength) updated = true;
-                }
-                
-                if (updated) {
-                    await forumDB.update('problems', problem);
-                }
-            }
-            
-            logout();
-            location.reload();
+                // Удаление задач пользователя
+                const userProblems = problems.filter(problem => problem.authorId === currentUser.id);
+                for (const problem of userProblems) {
+                    const { error: problemError } = await supabase
+                        .from('problems')
+                        .delete()
+                        .eq('id', problem.id);
                     
-        } catch (error) {
-            console.error('Ошибка при удалении аккаунта:', error);
-            alert('Ошибка при удалении аккаунта.');
+                    if (problemError) throw problemError;
+                }
+                
+                // Обновление других задач (удаление решений, комментариев, избранного)
+                const otherProblems = problems.filter(problem => problem.authorId !== currentUser.id);
+                for (const problem of otherProblems) {
+                    let updated = false;
+                    let updateData = {};
+                    
+                    if (problem.solutions) {
+                        const originalLength = problem.solutions.length;
+                        problem.solutions = problem.solutions.filter(solution => solution.authorId !== currentUser.id);
+                        if (problem.solutions.length !== originalLength) {
+                            updated = true;
+                            updateData.solutions = problem.solutions;
+                        }
+                    }
+                    
+                    if (problem.comments) {
+                        const originalLength = problem.comments.length;
+                        problem.comments = problem.comments.filter(comment => comment.authorId !== currentUser.id);
+                        if (problem.comments.length !== originalLength) {
+                            updated = true;
+                            updateData.comments = problem.comments;
+                        }
+                    }
+                    
+                    if (problem.favorites) {
+                        const originalLength = problem.favorites.length;
+                        problem.favorites = problem.favorites.filter(id => id !== currentUser.id);
+                        if (problem.favorites.length !== originalLength) {
+                            updated = true;
+                            updateData.favorites = problem.favorites;
+                        }
+                    }
+                    
+                    if (updated) {
+                        const { error } = await supabase
+                            .from('problems')
+                            .update(updateData)
+                            .eq('id', problem.id);
+                        
+                        if (error) throw error;
+                    }
+                }
+                
+                logout();
+                location.reload();
+                        
+            } catch (error) {
+                console.error('Ошибка при удалении аккаунта:', error);
+                alert('Ошибка при удалении аккаунта.');
+            }
         }
-    }
 
-    async function saveDescription() {
-        if (!currentUser) return;
+        async function saveDescription() {
+            if (!currentUser) return;
+            
+            showLoading();
+            
+            const description = document.getElementById('account-description').value;
+            
+            if (description.length > 100) {
+                showSuccessMessage('Описание не может превышать 100 символов');
+                return;
+            }
+            
+            currentUser.description = description;
+            
+            const userIndex = users.findIndex(u => u.id === currentUser.id);
+            if (userIndex !== -1) {
+                users[userIndex].description = description;
+                
+                // Обновление в Supabase
+                const { error } = await supabase
+                    .from('users')
+                    .update({ description: description })
+                    .eq('id', currentUser.id);
+                
+                if (error) throw error;
+            }
+            
+            localStorage.setItem('current_user', JSON.stringify(currentUser));
+            loadProfileData();
+            showSuccessMessage('Описание профиля сохранено!');
         
-        showLoading();
-        
-        const description = document.getElementById('account-description').value;
-        
-        if (description.length > 100) {
-            showSuccessMessage('Описание не может превышать 100 символов');
-            return;
+            hideLoading();
         }
-        
-        currentUser.description = description;
-        
-        const userIndex = users.findIndex(u => u.id === currentUser.id);
-        if (userIndex !== -1) {
-            users[userIndex].description = description;
-            await forumDB.update('users', users[userIndex]);
-        }
-        
-        localStorage.setItem('current_user', JSON.stringify(currentUser));
-        loadProfileData();
-        showSuccessMessage('Описание профиля сохранено!');
-    
-    hideLoading();
-    }
     
     // Функция для расчета общего количества страниц
     function calculateTotalPages() {
-    totalPages = Math.ceil(currentProblems.length / problemsPerPage);
-    return totalPages;
-}
+            totalPages = Math.ceil(currentProblems.length / problemsPerPage);
+            return totalPages;
+        }
 
     // Функция для установки текущей страницы
     function setPage(page) {
-    if (page < 1 || page > totalPages) return;
-    
-    currentPage = page;
-    
-        loadProblems();
-    
-     document.getElementById('problems-list').scrollIntoView({ behavior: 'smooth' });
-}
+            if (page < 1 || page > totalPages) return;
+            
+            currentPage = page;
+            
+            loadProblems();
+            
+            document.getElementById('problems-list').scrollIntoView({ behavior: 'smooth' });
+        }
 
     // Функция для обновления пагинации
     function updatePagination() {
@@ -1290,7 +1386,7 @@ document.getElementById('problem-content').addEventListener('input', function() 
             document.getElementById('change-password-btn').addEventListener('click', changePassword);
             
         // Настраиваем счетчики символов
-        setupCharacterCounters();
+        setupCharacterCounters();                        
         
         // Система аккаунтов
         document.getElementById('login-btn').addEventListener('click', showAuthModal);
@@ -1671,58 +1767,51 @@ function setupSearchHandlers() {
         document.getElementById(`${tab}-form`).classList.add('active');
     }
 
-    async function login() {
-    const email = document.getElementById('login-email').value;
-    const password = document.getElementById('login-password').value;
-
-    showLoading();
-    try {
-        // Аутентификация в Supabase
-        const { data: authData, error: authError } = await supabase.auth.signInWithPassword({
-            email: email,
-            password: password,
-        });
-
-        if (authError) throw authError;
-
-        // Получаем данные пользователя
-        const { data: userData, error: userError } = await supabase
-            .from('users')
-            .select('*')
-            .eq('id', authData.user.id)
-            .single();
-
-        if (userError) throw userError;
-
-        currentUser = {
-            id: userData.id,
-            name: userData.name,
-            email: userData.email,
-            registrationDate: userData.registration_date,
-            description: userData.description
-        };
-
-        localStorage.setItem('current_user', JSON.stringify(currentUser));
-        checkAuthState();
-        hideAuthModal();
-        showSuccessMessage(`Добро пожаловать, ${userData.name}!`);
+    function login() {
+        const email = document.getElementById('login-email').value;
+        const password = document.getElementById('login-password').value;
+        const errorElement = document.getElementById('login-error');
         
-    } catch (error) {
-        console.error('Ошибка входа:', error);
-        showSuccessMessage(error.message);
+        if (!email || !password) {
+            errorElement.textContent = 'Заполните все поля';
+            return;
+        }
+        
+        const user = users.find(u => u.email === email && u.password === password);
+        
+        
+        if (user) {
+        showLoading();
+            currentUser = {
+                id: user.id,
+                name: user.name,
+                email: user.email,
+                registrationDate: user.registrationDate,
+                description: user.description || ''
+            };
+            
+            localStorage.setItem('current_user', JSON.stringify(currentUser));
+            checkAuthState();
+            hideAuthModal();
+            showProblemsList();
+            setActiveNav(document.getElementById('nav-problems'));
+            showSuccessMessage(`Добро пожаловать, ${user.name}!`);
+            location.reload();
+        } else {
+            errorElement.textContent = 'Неверный email или пароль';
+        }
+        hideLoading();
+        
     }
-    hideLoading();
-}
 
-    async function logout() {
-    const { error } = await supabase.auth.signOut();
-    if (error) console.error('Ошибка выхода:', error);
-    
-    currentUser = null;
-    localStorage.removeItem('current_user');
-    checkAuthState();
-    showSuccessMessage('Вы вышли из аккаунта');
-}
+    function logout() {
+        currentUser = null;
+        localStorage.removeItem('current_user');
+        checkAuthState();
+        showSuccessMessage('Вы вышли из аккаунта');
+        showProblemsList();
+        location.reload();
+    }
 
     function checkAuthState() {
         if (currentUser) {
@@ -1774,31 +1863,6 @@ function setupSearchHandlers() {
             }
         }
     }
-    
-    // Проверка сессии при загрузке
-async function checkSession() {
-    const { data: { session } } = await supabase.auth.getSession();
-    if (session && !currentUser) {
-        // Пользователь уже авторизован, загружаем его данные
-        const { data: userData } = await supabase
-            .from('users')
-            .select('*')
-            .eq('id', session.user.id)
-            .single();
-            
-        if (userData) {
-            currentUser = {
-                id: userData.id,
-                name: userData.name,
-                email: userData.email,
-                registrationDate: userData.registration_date,
-                description: userData.description
-            };
-            localStorage.setItem('current_user', JSON.stringify(currentUser));
-        }
-    }
-    checkAuthState();
-}
 
     // Функция удаления текуной задачи (из детального просмотра)
     function deleteCurrentProblem() {
@@ -2581,83 +2645,83 @@ async function checkSession() {
 
     // Функция чтения файлов изображений с оптимизацией
     function readImageFiles(files) {
-        return new Promise((resolve) => {
-            const images = [];
-            let filesProcessed = 0;
-            
-            const validFiles = Array.from(files).filter(file => file.size <= MAX_IMAGE_SIZE);
-            
-            if (validFiles.length === 0) {
-                resolve([]);
-                return;
-            }
-            
-            for (let i = 0; i < validFiles.length; i++) {
-                const file = validFiles[i];
-                const reader = new FileReader();
+            return new Promise((resolve) => {
+                const images = [];
+                let filesProcessed = 0;
                 
-                reader.onload = function(e) {
-                    const img = new Image();
-                    img.onload = function() {
-                        const canvas = document.createElement('canvas');
-                        const ctx = canvas.getContext('2d');
-                        
-                        let width = img.width;
-                        let height = img.height;
-                        
-                        if (width > MAX_IMAGE_DIMENSION || height > MAX_IMAGE_DIMENSION) {
-                            if (width > height) {
-                                height = Math.round(height * MAX_IMAGE_DIMENSION / width);
-                                width = MAX_IMAGE_DIMENSION;
-                            } else {
-                                width = Math.round(width * MAX_IMAGE_DIMENSION / height);
-                                height = MAX_IMAGE_DIMENSION;
+                const validFiles = Array.from(files).filter(file => file.size <= MAX_IMAGE_SIZE);
+                
+                if (validFiles.length === 0) {
+                    resolve([]);
+                    return;
+                }
+                
+                for (let i = 0; i < validFiles.length; i++) {
+                    const file = validFiles[i];
+                    const reader = new FileReader();
+                    
+                    reader.onload = function(e) {
+                        const img = new Image();
+                        img.onload = function() {
+                            const canvas = document.createElement('canvas');
+                            const ctx = canvas.getContext('2d');
+                            
+                            let width = img.width;
+                            let height = img.height;
+                            
+                            if (width > MAX_IMAGE_DIMENSION || height > MAX_IMAGE_DIMENSION) {
+                                if (width > height) {
+                                    height = Math.round(height * MAX_IMAGE_DIMENSION / width);
+                                    width = MAX_IMAGE_DIMENSION;
+                                } else {
+                                    width = Math.round(width * MAX_IMAGE_DIMENSION / height);
+                                    height = MAX_IMAGE_DIMENSION;
+                                }
                             }
-                        }
+                            
+                            canvas.width = width;
+                            canvas.height = height;
+                            
+                            ctx.drawImage(img, 0, 0, width, height);
+                            
+                            const optimizedDataUrl = canvas.toDataURL('image/jpeg', 0.8);
+                            
+                            images.push({
+                                name: file.name,
+                                data: optimizedDataUrl,
+                                width: width,
+                                height: height
+                            });
+                            
+                            filesProcessed++;
+                            if (filesProcessed === validFiles.length) {
+                                resolve(images);
+                            }
+                        };
                         
-                        canvas.width = width;
-                        canvas.height = height;
+                        img.onerror = function() {
+                            console.error('Ошибка загрузки изображения');
+                            filesProcessed++;
+                            if (filesProcessed === validFiles.length) {
+                                resolve(images);
+                            }
+                        };
                         
-                        ctx.drawImage(img, 0, 0, width, height);
-                        
-                        const optimizedDataUrl = canvas.toDataURL('image/jpeg', 0.8);
-                        
-                        images.push({
-                            name: file.name,
-                            data: optimizedDataUrl,
-                            width: width,
-                            height: height
-                        });
-                        
+                        img.src = e.target.result;
+                    };
+                    
+                    reader.onerror = function() {
+                        console.error('Ошибка чтения файла');
                         filesProcessed++;
                         if (filesProcessed === validFiles.length) {
                             resolve(images);
                         }
                     };
                     
-                    img.onerror = function() {
-                        console.error('Ошибка загрузки изображения');
-                        filesProcessed++;
-                        if (filesProcessed === validFiles.length) {
-                            resolve(images);
-                        }
-                    };
-                    
-                    img.src = e.target.result;
-                };
-                
-                reader.onerror = function() {
-                    console.error('Ошибка чтения файла');
-                    filesProcessed++;
-                    if (filesProcessed === validFiles.length) {
-                        resolve(images);
-                    }
-                };
-                
-                reader.readAsDataURL(file);
-            }
-        });
-    }
+                    reader.readAsDataURL(file);
+                }
+            });
+        }
 
     // Функция для вставки текста в текущую позицию курсора
     function insertAtCursor(textarea, text) {
@@ -2766,8 +2830,13 @@ async function checkSession() {
             currentUser.password = newPassword;
             
             try {
-                await forumDB.update('users', users[userIndex]);
-                localStorage.setItem('current_user', JSON.stringify(currentUser));
+                // Обновление в Supabase
+                const { error } = await supabase
+                    .from('users')
+                    .update({ password: newPassword })
+                    .eq('id', currentUser.id);
+                
+                if (error) throw error;
                 
                 // Очищаем поля
                 document.getElementById('old-password').value = '';
