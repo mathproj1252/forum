@@ -614,8 +614,9 @@ async function addProblem() {
         try {
             const images = await readImageFiles(imageFiles);
             
-            // ИСПРАВЛЕННЫЙ ОБЪЕКТ - БЕЗ ПОЛЯ date
+            // ИСПРАВЛЕНИЕ: Добавляем ID задачи
             const newProblem = {
+                id: Date.now(), // ДОБАВЛЕНО ID
                 title: title,
                 content: content,
                 author: currentUser.name,
@@ -700,7 +701,6 @@ async function addProblem() {
                     author_id: currentUser.id,
                     content: content,
                     images: images,
-                    date: new Date().toLocaleDateString('ru-RU'),
                     likes: [],
                     dislikes: [],
                     created_at: new Date().toISOString()
@@ -763,7 +763,6 @@ async function addProblem() {
                     author_id: currentUser.id,
                     content: content,
                     images: images,
-                    date: new Date().toLocaleDateString('ru-RU'),
                     likes: [],
                     dislikes: [],
                     created_at: new Date().toISOString()
@@ -2947,7 +2946,7 @@ function showErrorMessage(message) {
     // Функция проверки сложности пароля
     function validatePassword(password) {
         // Более гибкая проверка пароля
-        const passwordRegex = /^(?=.*[A-Za-z])(?=.*\d)[A-Za-z\d.]{8,}$/;
+        const passwordRegex = /^[A-Za-z0-9.]{8,}$/;
         return passwordRegex.test(password);
     }
 
