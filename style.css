@@ -1103,7 +1103,8 @@
         body.dark-theme .form-group select, 
         body.dark-theme .faq-answer,
         body.dark-theme .math,
-        body.dark-theme .auth-content {
+        body.dark-theme .auth-content,
+        body.dark-theme .feature-card {
             background-color: #4a5568;
             border-color: #2d3748;
             color: #e6e6e6;
