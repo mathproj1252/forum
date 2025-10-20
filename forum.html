@@ -1,0 +1,3711 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=0.8">
+    <title>Форум задач</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    
+    <!-- Замена MathJax на KaTeX -->
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css" integrity="sha384-n8MVd4RsNIU0tAv4ct0nTaAbDJwPJzDEaqSD1odI+WdtXRGWt2kTvGFasHpSy3SV" crossorigin="anonymous">
+    <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.js" integrity="sha384-XjKyOOlGwcjNTAIQHIpgOno0Hl1YQqzUOEleOLALmuqehneUG+vnGctmUb0ZY0l8" crossorigin="anonymous"></script>
+    <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/contrib/auto-render.min.js" integrity="sha384-+VBxd3r6XgURycqtZ117nYw44OOcIax56Z4dCRWbxyPt0Koah1uHoK0o4+/RRE05" crossorigin="anonymous"></script>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="database.js"></script>
+<script>
+    
+    // Глобальные переменные
+    const forumDB = new SupabaseDatabase();
+    let currentProblemId = null;
+    let problems = [];
+    let currentUser = null;
+    let users = [];
+    let currentSort = 'date';
+    let currentPage = 1;
+    const problemsPerPage = 10;
+    let totalPages = 1;
+    let currentProblems = [];
+    let searchResults = [];
+    let isSearchActive = false;
+
+    // Константы для ограничений
+    const MAX_IMAGE_SIZE = 2 * 1024 * 1024;
+    const MAX_IMAGE_DIMENSION = 2000;
+    const MAX_IMAGES_PER_ITEM = 1;
+
+    // Флаг для отслеживания инициализации
+    let isInitialized = false;
+
+    // Функция загрузки задач (с пагинацией)
+function loadProblems(problemsArray = problems) {
+    const problemsList = document.getElementById('problems-list');
+    problemsList.innerHTML = '<h2 class="section-title"><i class="fas fa-tasks"></i>Задачи</h2>';
+    
+    if (isSearchActive && searchResults.length > 0) {
+        currentProblems = searchResults;
+    } else {
+        currentProblems = problemsArray;
+        isSearchActive = false;
+    }
+    
+    calculateTotalPages(currentProblems);
+    
+    if (currentProblems.length === 0) {
+        problemsList.innerHTML += `
+            <div class="empty-state">
+                <i class="fas fa-clipboard-list"></i>
+                <h3>Пока нет добавленных задач</h3>
+                <p>Будьте первым, кто добавит задачу!</p>
+            </div>
+        `;
+        
+        document.getElementById('pagination-container').style.display = 'none';
+        document.getElementById('pagination-top-container').style.display = 'none';
+        return;
+    }
+    
+    const sortedProblems = sortProblems([...currentProblems]);
+    const startIndex = (currentPage - 1) * problemsPerPage;
+    const endIndex = startIndex + problemsPerPage;
+    const problemsToShow = sortedProblems.slice(startIndex, endIndex);
+    
+    problemsToShow.forEach(problem => {
+        const problemEl = document.createElement('div');
+        problemEl.className = 'problem';
+        
+        let difficultyClass = '';
+        if (problem.difficulty === 'легкая') difficultyClass = 'difficulty-easy';
+        if (problem.difficulty === 'средняя') difficultyClass = 'difficulty-medium';
+        if (problem.difficulty === 'сложная') difficultyClass = 'difficulty-hard';
+        
+        const userLiked = currentUser && problem.likes && problem.likes.includes(currentUser.id);
+        const userDisliked = currentUser && problem.dislikes && problem.dislikes.includes(currentUser.id);
+        const isFavorited = currentUser && problem.favorites && problem.favorites.includes(currentUser.id);
+        
+        let imagePreview = '';
+        if (problem.images && problem.images.length > 0) {
+            const imageContainer = document.createElement('div');
+            imageContainer.className = 'attached-images';
+            
+            const img = document.createElement('img');
+            img.src = problem.images[0].data;
+            img.className = 'attached-image';
+            img.onclick = function() {
+                openImageModal(problem.images[0].data);
+            };
+            imageContainer.appendChild(img);
+            
+            if (problem.images.length > 1) {
+                const span = document.createElement('span');
+                span.textContent = `+${problem.images.length - 1} изображений`;
+                imageContainer.appendChild(span);
+            }
+            
+            imagePreview = imageContainer.outerHTML;
+        }
+        
+        const canDelete = currentUser && (problem.author_id === currentUser.id || isAdmin(currentUser));
+    
+        problemEl.innerHTML = `
+            <div style="display: flex; justify-content: space-between; align-items: flex-start;">
+                <h3>${escapeHtml(problem.title)}</h3>
+                <button class="favorite-btn ${isFavorited ? 'favorited' : ''}" data-id="${problem.id}" title="${isFavorited ? 'Удалить из избранного' : 'Добавить в избранное'}">
+                    <i class="${isFavorited ? 'fas' : 'far'} fa-star"></i>
+                </button>
+            </div>
+            <p>${escapeHtml(problem.content.substring(0, 150))}${problem.content.length > 150 ? '...' : ''}</p>
+            ${imagePreview}
+            <div class="problem-meta">
+                <span>ID: ${problem.id}</span>
+                <span>Автор: ${escapeHtml(problem.author)}</span>
+                <span>Дата: ${problem.date || 'Неизвестно'}</span>
+                <span class="${difficultyClass}">Сложность: ${problem.difficulty}</span>
+            </div>
+            <div>
+                ${problem.tags ? problem.tags.map(tag => `<span class="tag">${escapeHtml(tag)}</span>`).join('') : ''}
+            </div>
+            <div class="reactions">
+                <button class="reaction-btn ${userLiked ? 'liked' : ''}" data-type="like" data-id="${problem.id}">
+                    <i class="fas fa-thumbs-up"></i>
+                    <span class="reaction-count">${problem.likes ? problem.likes.length : 0}</span>
+                </button>
+                <button class="reaction-btn ${userDisliked ? 'disliked' : ''}" data-type="dislike" data-id="${problem.id}">
+                    <i class="fas fa-thumbs-down"></i>
+                    <span class="reaction-count">${problem.dislikes ? problem.dislikes.length : 0}</span>
+                </button>
+            </div>
+            <div class="problem-actions">
+                <button class="btn view-problem" data-id="${problem.id}">
+                    <i class="fas fa-eye"></i> Посмотреть задачу
+                </button>
+                ${canDelete ? 
+                    `<button class="btn btn-secondary btn-sm delete-problem-list" data-id="${problem.id}">
+                        <i class="fas fa-trash"></i> Удалить
+                    </button>` : ''}
+            </div>
+        `;
+        
+        problemsList.appendChild(problemEl);
+    });
+    
+    updatePagination();
+    // Рендерим формулы KaTeX после загрузки задач
+            renderMathInElement(problemsList, {
+                delimiters: [
+                    {left: '$$', right: '$$', display: true},
+                    {left: '$', right: '$', display: false},
+                    {left: '\\(', right: '\\)', display: false},
+                    {left: '\\[', right: '\\]', display: true}
+                ],
+                throwOnError: false
+            });
+}
+
+    // Инициализация при загрузке страницы
+    document.addEventListener('DOMContentLoaded', async function() {
+        if (isInitialized) return;
+        isInitialized = true;
+        
+        console.log('Инициализация приложения...');
+        
+        // Инициализация KaTeX после загрузки страницы
+            document.addEventListener("DOMContentLoaded", function() {
+                renderMathInElement(document.body, {
+                    delimiters: [
+                        {left: '$$', right: '$$', display: true},
+                        {left: '$', right: '$', display: false},
+                        {left: '\\(', right: '\\)', display: false},
+                        {left: '\\[', right: '\\]', display: true}
+                    ],
+                    throwOnError: false
+                });
+            });
+        
+        await initializeData();
+        loadProblems();
+        updateCounters();
+        setupEventListeners();
+        setupSearchHandlers();
+        showProblemsList();
+        checkAuthState();
+        setupImageUploadHandlers();
+        setupCharacterCounters();
+        
+        // Наблюдатель за изменениями DOM для рендеринга KaTeX в динамическом контенте
+            const observer = new MutationObserver(function(mutations) {
+                let shouldUpdate = false;
+                
+                mutations.forEach(function(mutation) {
+                    if (mutation.type === 'characterData' || mutation.addedNodes.length > 0) {
+                        shouldUpdate = true;
+                    }
+                });
+
+                if (shouldUpdate) {
+                    setTimeout(function() {
+                        renderMathInElement(document.body, {
+                            delimiters: [
+                                {left: '$$', right: '$$', display: true},
+                                {left: '$', right: '$', display: false},
+                                {left: '\\(', right: '\\)', display: false},
+                                {left: '\\[', right: '\\]', display: true}
+                            ],
+                            throwOnError: false
+                        });
+                    }, 1);
+                }
+            });
+
+            observer.observe(document.body, {
+                childList: true,
+                subtree: true,
+                characterData: true
+            });
+        });
+
+    // Инициализация данных
+    async function initializeData() {
+    showLoading();
+    try {
+        await forumDB.init();
+        
+        // Загружаем пользователей
+        users = await forumDB.getAllUsers();
+        console.log('Пользователи загружены:', users.length);
+        
+        // Загружаем задачи
+        problems = await forumDB.getAllProblems();
+        console.log('Задачи загружены:', problems.length);
+        
+        // Инициализируем недостающие поля для совместимости
+        problems.forEach(problem => {
+            if (!problem.likes) problem.likes = [];
+            if (!problem.dislikes) problem.dislikes = [];
+            if (!problem.images) problem.images = [];
+            if (!problem.favorites) problem.favorites = [];
+            if (!problem.bestSolutionId) problem.bestSolutionId = null;
+            if (!problem.solutions) problem.solutions = [];
+            if (!problem.comments) problem.comments = [];
+            
+            // Для совместимости со старым кодом
+            problem.authorId = problem.author_id;
+            problem.date = problem.created_at ? new Date(problem.created_at).toLocaleDateString('ru-RU') : problem.date;
+        });
+        
+        const savedUser = localStorage.getItem('current_user');
+        if (savedUser) {
+            currentUser = JSON.parse(savedUser);
+            console.log('Текущий пользователь:', currentUser);
+            
+            // Обновляем данные пользователя из базы
+            const freshUser = await forumDB.getUser(currentUser.id);
+            if (freshUser) {
+                currentUser = { ...currentUser, ...freshUser };
+                localStorage.setItem('current_user', JSON.stringify(currentUser));
+            }
+        }
+        
+        hideLoading();
+        
+    } catch (error) {
+        console.error('Error initializing data:', error);
+        hideLoading();
+        users = [];
+        problems = [];
+        showErrorMessage('Ошибка при загрузке данных. Пожалуйста, обновите страницу.');
+    }
+}
+
+    // Функции для работы с задачами
+async function addProblem() {
+    if (!currentUser) {
+        showAuthModal();
+        return;
+    }
+    
+    const title = document.getElementById('problem-title').value.trim();
+    const content = document.getElementById('problem-content').value.trim();
+    const tags = document.getElementById('problem-tags').value;
+    const difficulty = document.getElementById('problem-difficulty').value;
+    const imageFiles = document.getElementById('problem-images').files;
+    
+    // Валидация длины названия
+    if (title.length < 5 || title.length > 200) {
+        showErrorMessage('Название задачи должно содержать от 5 до 200 символов');
+        return;
+    }
+    
+    // Валидация длины условия
+    if (content.length < 10 || content.length > 2000) {
+        showErrorMessage('Условие задачи должно содержать от 10 до 2000 символов');
+        return;
+    }
+    
+    // Валидация тегов
+    const tagArray = tags.split(',').map(tag => tag.trim()).filter(tag => tag !== '');
+    if (tagArray.length > 10) {
+        showErrorMessage('Можно указать не более 10 тегов');
+        return;
+    }
+    
+    for (const tag of tagArray) {
+        if (tag.length > 30) {
+            showErrorMessage('Каждый тег должен быть не длиннее 30 символов');
+            return;
+        }
+    }
+    
+    if (title && content) {
+        showLoading();
+        try {
+            const images = await readImageFiles(imageFiles);
+            
+            // ИСПРАВЛЕНИЕ: Добавляем ID задачи
+            const newProblem = {
+                id: Date.now(), // ДОБАВЛЕНО ID
+                title: title,
+                content: content,
+                author: currentUser.name,
+                author_id: currentUser.id,
+                tags: tagArray,
+                difficulty: difficulty,
+                images: images,
+                likes: [],
+                dislikes: [],
+                favorites: [],
+                best_solution_id: null,
+                created_at: new Date().toISOString()
+            };
+            
+            console.log('Добавляем задачу:', newProblem);
+            
+            const addedProblem = await forumDB.addProblem(newProblem);
+            console.log('Задача добавлена:', addedProblem);
+            
+            // Добавляем локальные поля для совместимости
+            addedProblem.solutions = addedProblem.solutions || [];
+            addedProblem.comments = addedProblem.comments || [];
+            addedProblem.authorId = addedProblem.author_id;
+            addedProblem.bestSolutionId = addedProblem.best_solution_id;
+            // Добавляем поле date для отображения (вычисляемое поле)
+            addedProblem.date = new Date(addedProblem.created_at).toLocaleDateString('ru-RU');
+            
+            problems.push(addedProblem);
+            
+            // Очистка формы
+            document.getElementById('problem-title').value = '';
+            document.getElementById('problem-content').value = '';
+            document.getElementById('problem-tags').value = '';
+            document.getElementById('problem-difficulty').value = 'легкая';
+            document.getElementById('problem-images').value = '';
+            document.getElementById('problem-file-names').textContent = '';
+            document.getElementById('problem-image-previews').innerHTML = '';
+            
+            showSuccessMessage('Ваша задача успешно добавлена!');
+            currentPage = 1;
+            loadProblems();
+            updateCounters();
+            showProblemsList();
+            setActiveNav(document.getElementById('nav-problems'));
+            
+        } catch (error) {
+            console.error('Ошибка при добавлении задачи:', error);
+            showErrorMessage('Произошла ошибка при добавлении задачи: ' + error.message);
+        }
+        hideLoading();
+    } else {
+        showErrorMessage('Пожалуйста, заполните все обязательные поля');
+    }
+}
+
+    async function addSolution() {
+        if (!currentUser) {
+            showAuthModal();
+            return;
+        }
+        
+        if (!currentProblemId) return;
+        
+        const content = document.getElementById('solution-content').value;
+        const imageFiles = document.getElementById('solution-images').files;
+        
+        // Валидация длины решения
+        if (content.length < 10 || content.length > 3000) {
+            showSuccessMessage('Решение должно содержать от 10 до 3000 символов');
+            return;
+        }
+    
+        if (content) {
+            showLoading();
+            try {
+                const images = await readImageFiles(imageFiles);
+                
+                const newSolution = {
+                    id: Date.now(),
+                    problem_id: currentProblemId,
+                    author: currentUser.name,
+                    author_id: currentUser.id,
+                    content: content,
+                    images: images,
+                    likes: [],
+                    dislikes: [],
+                    created_at: new Date().toISOString()
+                };
+                
+                const addedSolution = await forumDB.addSolution(newSolution);
+                
+                // Обновляем локальный список проблем
+                const problem = problems.find(p => p.id === currentProblemId);
+                if (problem) {
+                    if (!problem.solutions) problem.solutions = [];
+                    problem.solutions.push(addedSolution);
+                }
+                
+                document.getElementById('solution-content').value = '';
+                document.getElementById('solution-images').value = '';
+                document.getElementById('solution-file-names').textContent = '';
+                document.getElementById('solution-image-previews').innerHTML = '';
+                
+                showProblemDetail(currentProblemId);
+                updateCounters();
+                showSuccessMessage('Решение успешно добавлено!');
+                
+            } catch (error) {
+                console.error('Ошибка при добавлении решения:', error);
+                alert('Произошла ошибка при добавлении решения. Пожалуйста, попробуйте еще раз.');
+            }
+            hideLoading();
+        } else {
+            alert('Пожалуйста, заполните поле с решением');
+        }
+    }
+
+    async function addComment() {
+        if (!currentUser) {
+            showAuthModal();
+            return;
+        }
+        
+        if (!currentProblemId) return;
+        
+        const content = document.getElementById('comment-content').value;
+        const imageFiles = document.getElementById('comment-images').files;
+        
+        // Валидация длины комментария
+        if (content.length < 10 || content.length > 3000) {
+            showSuccessMessage('Комментарий должен содержать от 10 до 3000 символов');
+            return;
+        }
+    
+        if (content) {
+            showLoading();
+            try {
+                const images = await readImageFiles(imageFiles);
+            
+                const newComment = {
+                    id: Date.now(),
+                    problem_id: currentProblemId,
+                    author: currentUser.name,
+                    author_id: currentUser.id,
+                    content: content,
+                    images: images,                                                            
+                    likes: [],
+                    dislikes: [],
+                    created_at: new Date().toISOString()
+                };
+                
+                const addedComment = await forumDB.addComment(newComment);
+                
+                // Обновляем локальный список проблем
+                const problem = problems.find(p => p.id === currentProblemId);
+                if (problem) {
+                    if (!problem.comments) problem.comments = [];
+                    problem.comments.push(addedComment);
+                }
+                
+                document.getElementById('comment-content').value = '';
+                document.getElementById('comment-images').value = '';
+                document.getElementById('comment-file-names').textContent = '';
+                document.getElementById('comment-image-previews').innerHTML = '';
+                
+                showProblemDetail(currentProblemId);
+                updateCounters();
+                showSuccessMessage('Комментарий успешно добавлен!');
+            } catch (error) {
+                console.error('Ошибка при добавлении комментария:', error);
+                alert('Произошла ошибка при добавлении комментария. Пожалуйста, попробуйте еще раз.');
+            }
+            hideLoading();
+        } else {
+            alert('Пожалуйста, заполните поле с комментарием');
+        }
+    }
+
+    async function deleteProblem(problemId) {
+        if (!confirm('Вы уверены, что хотите удалить задачу?')) return;
+        
+        showLoading();
+        
+        try {
+            await forumDB.deleteProblem(problemId);
+            
+            // Обновляем локальный список
+            const problemIndex = problems.findIndex(p => p.id === problemId);
+            if (problemIndex !== -1) {
+                problems.splice(problemIndex, 1);
+            }
+            
+            if (currentProblemId === problemId) {
+                showProblemsList();
+            } else {
+                calculateTotalPages();
+                if (currentPage > totalPages && totalPages > 0) {
+                    currentPage = totalPages;
+                }
+                loadProblems();
+            }
+            
+            updateCounters();
+            showSuccessMessage('Задача удалена!');
+        } catch (error) {
+            console.error('Ошибка при удалении задачи:', error);
+            alert('Ошибка при удалении задачи.');
+        } finally {
+            hideLoading();
+        }
+    }
+
+    async function deleteSolution(problemId, solutionIndex) {
+        if (!confirm('Вы уверены, что хотите удалить решение?')) return;
+        
+        const problem = problems.find(p => p.id === problemId);
+        
+        if (problem && problem.solutions && solutionIndex < problem.solutions.length) {
+            const solution = problem.solutions[solutionIndex];
+            
+            try {
+                await forumDB.deleteSolution(solution.id);
+                
+                if (problem.best_solution_id === solution.id) {
+                    problem.best_solution_id = null;
+                    await forumDB.updateProblem(problemId, { best_solution_id: null });
+                }
+                
+                problem.solutions.splice(solutionIndex, 1);
+                
+                showProblemDetail(problemId);
+                updateCounters();
+                showSuccessMessage('Решение удалено!');
+            } catch (error) {
+                console.error('Ошибка при удалении решения:', error);
+                alert('Ошибка при удалении решения.');
+            }
+        }
+    }
+
+    async function deleteComment(problemId, commentIndex) {
+        if (!confirm('Вы уверены, что хотите удалить комментарий?')) return;
+        
+        const problem = problems.find(p => p.id === problemId);
+        
+        if (problem && problem.comments && commentIndex < problem.comments.length) {
+            const comment = problem.comments[commentIndex];
+            
+            try {
+                await forumDB.deleteComment(comment.id);
+                problem.comments.splice(commentIndex, 1);
+                
+                showProblemDetail(problemId);
+                updateCounters();
+                showSuccessMessage('Комментарий удален!');
+            } catch (error) {
+                console.error('Ошибка при удалении комментария:', error);
+                alert('Ошибка при удалении комментария.');
+            }
+        }
+    }
+
+    async function handleReaction(itemType, problemId, solutionIndex, commentIndex, reactionType) {
+        if (!currentUser) {
+            showAuthModal();
+            return;
+        }
+        
+        let item;
+        let problem = problems.find(p => p.id === problemId);
+        
+        if (!problem) return;
+        
+        if (itemType === 'problem') {
+            item = problem;
+        } else if (itemType === 'solution') {
+            if (problem.solutions && solutionIndex !== null) {
+                item = problem.solutions[solutionIndex];
+            }
+        } else if (itemType === 'comment') {
+            if (problem.comments && commentIndex !== null) {
+                item = problem.comments[commentIndex];
+            }
+        }
+        
+        if (!item) return;
+        
+        const userId = currentUser.id;
+        const liked = item.likes && item.likes.includes(userId);
+        const disliked = item.dislikes && item.dislikes.includes(userId);
+        
+        if (!item.likes) item.likes = [];
+        if (!item.dislikes) item.dislikes = [];
+        
+        if (reactionType === 'like') {
+            if (liked) {
+                item.likes = item.likes.filter(id => id !== userId);
+            } else {
+                item.likes.push(userId);
+                if (disliked) {
+                    item.dislikes = item.dislikes.filter(id => id !== userId);
+                }
+            }
+        } else if (reactionType === 'dislike') {
+            if (disliked) {
+                item.dislikes = item.dislikes.filter(id => id !== userId);
+            } else {
+                item.dislikes.push(userId);
+                if (liked) {
+                    item.likes = item.likes.filter(id => id !== userId);
+                }
+            }
+        }
+        
+        try {
+            // Обновляем в базе данных
+            if (itemType === 'problem') {
+                await forumDB.updateProblem(problemId, {
+                    likes: item.likes,
+                    dislikes: item.dislikes
+                });
+            } else if (itemType === 'solution') {
+                await forumDB.updateSolution(item.id, {
+                    likes: item.likes,
+                    dislikes: item.dislikes
+                });
+            } else if (itemType === 'comment') {
+                await forumDB.updateComment(item.id, {
+                    likes: item.likes,
+                    dislikes: item.dislikes
+                });
+            }
+            
+            // Обновляем отображение
+            if (itemType === 'problem') {
+                if (document.getElementById('problem-detail').style.display !== 'none') {
+                    showProblemDetail(problemId);
+                } else {
+                    loadProblems();
+                }
+            } else if (itemType === 'solution' || itemType === 'comment') {
+                showProblemDetail(problemId);
+            }
+        } catch (error) {
+            console.error('Ошибка при обновлении реакции:', error);
+        }
+    }
+
+    async function toggleFavorite(problemId) {
+        if (!currentUser) {
+            showAuthModal();
+            return;
+        }
+        
+        const problem = problems.find(p => p.id === problemId);
+        if (!problem) return;
+        
+        if (!problem.favorites) {
+            problem.favorites = [];
+        }
+        
+        const userId = currentUser.id;
+        const isFavorited = problem.favorites.includes(userId);
+        
+        if (isFavorited) {
+            problem.favorites = problem.favorites.filter(id => id !== userId);
+        } else {
+            const userFavoritesCount = problems.filter(p => 
+                p.favorites && p.favorites.includes(userId)
+            ).length;
+            
+            if (userFavoritesCount >= 50) {
+                showSuccessMessage('Достигнут лимит избранных задач (максимум 50). Удалите некоторые задачи из избранного, чтобы добавить новые.');
+                return;
+            }
+            
+            problem.favorites.push(userId);
+        }
+        
+        try {
+            await forumDB.updateProblem(problemId, {
+                favorites: problem.favorites
+            });
+            
+            if (document.getElementById('problem-detail').style.display !== 'none') {
+                showProblemDetail(problemId);
+            } else {
+                loadProblems();
+            }
+            
+            if (document.getElementById('profile-section').style.display !== 'none') {
+                loadProfileData();
+            }
+            
+            const message = isFavorited ? 'Задача удалена из избранного' : 'Задача добавлена в избранное';
+            showSuccessMessage(message);
+        } catch (error) {
+            console.error('Ошибка при обновлении избранного:', error);
+        }
+    }
+
+    async function toggleBestSolution(problemId, solutionId) {
+        if (!currentUser) {
+            showAuthModal();
+            return;
+        }
+        
+        const problem = problems.find(p => p.id === problemId);
+        if (!problem || problem.author_id !== currentUser.id) return;
+        
+        if (problem.best_solution_id === solutionId) {
+            problem.best_solution_id = null;
+        } else {
+            problem.best_solution_id = solutionId;
+        }
+        
+        try {
+            await forumDB.updateProblem(problemId, {
+                best_solution_id: problem.best_solution_id
+            });
+            
+            showProblemDetail(problemId);
+            
+            if (document.getElementById('profile-section').style.display !== 'none') {
+                loadProfileData();
+            }
+        } catch (error) {
+            console.error('Ошибка при обновлении лучшего решения:', error);
+        }
+    }
+
+    // Функции для работы с пользователями
+    async function register() {
+        const name = document.getElementById('register-name').value;
+        const email = document.getElementById('register-email').value;
+        const password = document.getElementById('register-password').value;
+        const passwordConfirm = document.getElementById('register-password-confirm').value;
+        const errorElement = document.getElementById('register-error');
+        
+        // Очищаем предыдущие ошибки
+        document.getElementById('register-password-error').textContent = '';
+        errorElement.textContent = '';
+        
+        if (!name || !email || !password || !passwordConfirm) {
+            errorElement.textContent = 'Заполните все поля';
+            return;
+        }
+        
+        // Проверяем длину имени
+        if (name.length > 40) {
+            errorElement.textContent = 'Имя пользователя должно быть не длиннее 40 символов';
+            return;
+        }
+        
+        // Проверяем сложность пароля
+        if (!validatePassword(password)) {
+            document.getElementById('register-password-error').textContent = 
+                'Пароль не соответствует требованиям';
+            return;
+        }
+        
+        if (password !== passwordConfirm) {
+            errorElement.textContent = 'Пароли не совпадают';
+            return;
+        }
+        
+        // Проверяем существование пользователя
+        const existingUser = await forumDB.getUserByEmail(email);
+        if (existingUser) {
+            errorElement.textContent = 'Пользователь с таким email уже существует';
+            return;
+        }
+        
+        // Проверяем существование имени
+        const allUsers = await forumDB.getAllUsers();
+        if (allUsers.some(u => u.name.toLowerCase() === name.toLowerCase())) {
+            errorElement.textContent = 'Пользователь с таким именем уже существует';
+            return;
+        }
+        
+        showLoading();
+        
+        try {
+            const newUser = {
+                id: Date.now(),
+                name: name,
+                email: email,
+                password: password,
+                registration_date: new Date().toLocaleDateString('ru-RU'),
+                description: ''
+            };
+            
+            await forumDB.addUser(newUser);
+            users.push(newUser);
+            
+            currentUser = {
+                id: newUser.id,
+                name: newUser.name,
+                email: newUser.email,
+                registrationDate: newUser.registration_date,
+                description: newUser.description
+            };
+            
+            localStorage.setItem('current_user', JSON.stringify(currentUser));
+            
+            checkAuthState();
+            hideAuthModal();
+            showProblemsList();
+            showSuccessMessage(`Регистрация успешна! Добро пожаловать, ${name}!`);
+            
+        } catch (error) {
+            console.error('Ошибка при регистрации:', error);
+            errorElement.textContent = 'Ошибка при регистрации. Попробуйте еще раз.';
+        } finally {
+            hideLoading();
+        }
+    }
+
+    async function login() {
+        const email = document.getElementById('login-email').value;
+        const password = document.getElementById('login-password').value;
+        const errorElement = document.getElementById('login-error');
+        
+        if (!email || !password) {
+            errorElement.textContent = 'Заполните все поля';
+            return;
+        }
+        
+        try {
+            const user = await forumDB.getUserByEmail(email);
+            
+            if (user && user.password === password) {
+                showLoading();
+                currentUser = {
+                    id: user.id,
+                    name: user.name,
+                    email: user.email,
+                    registrationDate: user.registration_date,
+                    description: user.description || ''
+                };
+                
+                localStorage.setItem('current_user', JSON.stringify(currentUser));
+                checkAuthState();
+                hideAuthModal();
+                showProblemsList();
+                setActiveNav(document.getElementById('nav-problems'));
+                showSuccessMessage(`Добро пожаловать, ${user.name}!`);
+            } else {
+                errorElement.textContent = 'Неверный email или пароль';
+            }
+            hideLoading();
+        } catch (error) {
+            console.error('Ошибка при входе:', error);
+            errorElement.textContent = 'Ошибка при входе. Попробуйте еще раз.';
+        }
+    }
+
+    function logout() {
+        currentUser = null;
+        localStorage.removeItem('current_user');
+        checkAuthState();
+        showSuccessMessage('Вы вышли из аккаунта');
+        showProblemsList();
+        location.reload();
+    }
+
+    async function deleteAccount() {
+        if (!currentUser) return;
+        
+        if (!confirm('Вы уверены, что хотите удалить аккаунт? Это действие нельзя отменить.')) {
+            return;
+        }
+        
+        try {
+            // Удаляем задачи пользователя
+            const userProblems = problems.filter(problem => problem.author_id === currentUser.id);
+            for (const problem of userProblems) {
+                await forumDB.deleteProblem(problem.id);
+            }
+            
+            // Удаляем решения и комментарии пользователя из других задач
+            const otherProblems = problems.filter(problem => problem.author_id !== currentUser.id);
+            for (const problem of otherProblems) {
+                // Удаляем решения пользователя
+                if (problem.solutions) {
+                    const userSolutions = problem.solutions.filter(solution => solution.author_id === currentUser.id);
+                    for (const solution of userSolutions) {
+                        await forumDB.deleteSolution(solution.id);
+                    }
+                }
+                
+                // Удаляем комментарии пользователя
+                if (problem.comments) {
+                    const userComments = problem.comments.filter(comment => comment.author_id === currentUser.id);
+                    for (const comment of userComments) {
+                        await forumDB.deleteComment(comment.id);
+                    }
+                }
+                
+                // Убираем пользователя из избранного и реакций
+                if (problem.favorites && problem.favorites.includes(currentUser.id)) {
+                    problem.favorites = problem.favorites.filter(id => id !== currentUser.id);
+                    await forumDB.updateProblem(problem.id, { favorites: problem.favorites });
+                }
+                
+                if (problem.likes && problem.likes.includes(currentUser.id)) {
+                    problem.likes = problem.likes.filter(id => id !== currentUser.id);
+                    await forumDB.updateProblem(problem.id, { likes: problem.likes });
+                }
+                
+                if (problem.dislikes && problem.dislikes.includes(currentUser.id)) {
+                    problem.dislikes = problem.dislikes.filter(id => id !== currentUser.id);
+                    await forumDB.updateProblem(problem.id, { dislikes: problem.dislikes });
+                }
+            }
+            
+            // Удаляем аккаунт пользователя
+            await forumDB.deleteUser(currentUser.id);
+            
+            logout();
+            location.reload();
+                    
+        } catch (error) {
+            console.error('Ошибка при удалении аккаунта:', error);
+            alert('Ошибка при удалении аккаунта.');
+        }
+    }
+
+    async function saveDescription() {
+        if (!currentUser) return;
+        
+        showLoading();
+        
+        const description = document.getElementById('account-description').value;
+        
+        if (description.length > 100) {
+            showSuccessMessage('Описание не может превышать 100 символов');
+            return;
+        }
+        
+        currentUser.description = description;
+        
+        try {
+            await forumDB.updateUser(currentUser.id, { description: description });
+            
+            const userIndex = users.findIndex(u => u.id === currentUser.id);
+            if (userIndex !== -1) {
+                users[userIndex].description = description;
+            }
+            
+            localStorage.setItem('current_user', JSON.stringify(currentUser));
+            loadProfileData();
+            showSuccessMessage('Описание профиля сохранено!');
+        } catch (error) {
+            console.error('Ошибка при сохранении описания:', error);
+            showSuccessMessage('Ошибка при сохранении описания.');
+        }
+    
+        hideLoading();
+    }
+
+    async function changePassword() {
+        if (!currentUser) return;
+        
+        const oldPassword = document.getElementById('old-password').value;
+        const newPassword = document.getElementById('new-password').value;
+        const confirmNewPassword = document.getElementById('confirm-new-password').value;
+        
+        // Очищаем предыдущие ошибки
+        document.getElementById('new-password-error').textContent = '';
+        document.getElementById('confirm-password-error').textContent = '';
+        
+        // Проверяем, что все поля заполнены
+        if (!oldPassword || !newPassword || !confirmNewPassword) {
+            showSuccessMessage('Заполните все поля для изменения пароля');
+            return;
+        }
+        
+        // Проверяем старый пароль
+        const user = await forumDB.getUser(currentUser.id);
+        if (!user || user.password !== oldPassword) {
+            showSuccessMessage('Старый пароль указан неверно');
+            return;
+        }
+        
+        // Проверяем новый пароль
+        if (!validatePassword(newPassword)) {
+            document.getElementById('new-password-error').textContent = 
+                'Пароль не соответствует требованиям';
+            return;
+        }
+        
+        // Проверяем подтверждение пароля
+        if (newPassword !== confirmNewPassword) {
+            document.getElementById('confirm-password-error').textContent = 
+                'Пароли не совпадают';
+            return;
+        }
+        
+        showLoading();
+        
+        try {
+            // Обновляем пароль
+            await forumDB.updateUser(currentUser.id, { password: newPassword });
+            
+            // Очищаем поля
+            document.getElementById('old-password').value = '';
+            document.getElementById('new-password').value = '';
+            document.getElementById('confirm-new-password').value = '';
+            
+            showSuccessMessage('Пароль успешно изменен!');
+        } catch (error) {
+            console.error('Ошибка при изменении пароля:', error);
+            showSuccessMessage('Ошибка при изменении пароля. Попробуйте еще раз.');
+        }
+        
+        hideLoading();
+    }
+
+    // Остальные функции остаются практически без изменений
+    function calculateTotalPages() {
+        totalPages = Math.ceil(currentProblems.length / problemsPerPage);
+        return totalPages;
+    }
+
+    function setPage(page) {
+        if (page < 1 || page > totalPages) return;
+        
+        currentPage = page;
+        loadProblems();
+        document.getElementById('problems-list').scrollIntoView({ behavior: 'smooth' });
+    }
+
+    function updatePagination() {
+        const paginationContainer = document.getElementById('pagination-container');
+        const paginationTopContainer = document.getElementById('pagination-top-container');
+        
+        renderPagination(paginationContainer);
+        renderPagination(paginationTopContainer);
+    }
+
+    function renderPagination(container) {
+        container.innerHTML = '';
+        
+        if (totalPages <= 1) {
+            container.style.display = 'none';
+            return;
+        }
+        
+        container.style.display = 'block';
+        
+        const paginationEl = document.createElement('div');
+        paginationEl.className = 'pagination';
+        
+        const pageInfo = document.createElement('div');
+        pageInfo.className = 'page-info';
+        const startProblem = (currentPage - 1) * problemsPerPage + 1;
+        const endProblem = Math.min(currentPage * problemsPerPage, currentProblems.length);
+        pageInfo.textContent = `Задачи ${startProblem}-${endProblem} из ${currentProblems.length}`;
+        
+        const prevButton = document.createElement('button');
+        prevButton.className = 'pagination-btn';
+        prevButton.innerHTML = '<i class="fas fa-chevron-left"></i>';
+        prevButton.disabled = currentPage === 1;
+        prevButton.addEventListener('click', function() {
+            setPage(currentPage - 1);
+        });
+        
+        const pageNumbers = document.createElement('div');
+        pageNumbers.className = 'page-numbers';
+        
+        let startPage = Math.max(1, currentPage - 2);
+        let endPage = Math.min(totalPages, currentPage + 2);
+        
+        if (currentPage <= 3) {
+            endPage = Math.min(5, totalPages);
+        }
+        if (currentPage >= totalPages - 2) {
+            startPage = Math.max(1, totalPages - 4);
+        }
+        
+        if (startPage > 1) {
+            const firstPageButton = document.createElement('button');
+            firstPageButton.className = 'pagination-btn';
+            firstPageButton.textContent = '1';
+            firstPageButton.addEventListener('click', function() {
+                setPage(1);
+            });
+            pageNumbers.appendChild(firstPageButton);
+            
+            if (startPage > 2) {
+                const ellipsis = document.createElement('span');
+                ellipsis.className = 'pagination-ellipsis';
+                ellipsis.textContent = '...';
+                pageNumbers.appendChild(ellipsis);
+            }
+        }
+        
+        for (let i = startPage; i <= endPage; i++) {
+            const pageButton = document.createElement('button');
+            pageButton.className = `pagination-btn ${i === currentPage ? 'active' : ''}`;
+            pageButton.textContent = i;
+            pageButton.addEventListener('click', function() {
+                setPage(i);
+            });
+            pageNumbers.appendChild(pageButton);
+        }
+        
+        if (endPage < totalPages) {
+            if (endPage < totalPages - 1) {
+                const ellipsis = document.createElement('span');
+                ellipsis.className = 'pagination-ellipsis';
+                ellipsis.textContent = '...';
+                pageNumbers.appendChild(ellipsis);
+            }
+            
+            const lastPageButton = document.createElement('button');
+            lastPageButton.className = 'pagination-btn';
+            lastPageButton.textContent = totalPages;
+            lastPageButton.addEventListener('click', function() {
+                setPage(totalPages);
+            });
+            pageNumbers.appendChild(lastPageButton);
+        }
+        
+        const nextButton = document.createElement('button');
+        nextButton.className = 'pagination-btn';
+        nextButton.innerHTML = '<i class="fas fa-chevron-right"></i>';
+        nextButton.disabled = currentPage === totalPages;
+        nextButton.addEventListener('click', function() {
+            setPage(currentPage + 1);
+        });
+        
+        paginationEl.appendChild(prevButton);
+        paginationEl.appendChild(pageNumbers);
+        paginationEl.appendChild(nextButton);
+        
+        container.appendChild(pageInfo);
+        container.appendChild(paginationEl);
+    }
+    
+    // Сортировка задач
+    function sortProblems(problemsArray) {
+        if (currentSort === 'date') {
+            return problemsArray.sort((a, b) => {
+                const dateA = a.created_at ? new Date(a.created_at) : new Date(a.id);
+                const dateB = b.created_at ? new Date(b.created_at) : new Date(b.id);
+                return dateB - dateA;
+            });
+        } else {
+            return problemsArray.sort((a, b) => {
+                const aLikes = a.likes ? a.likes.length : 0;
+                const bLikes = b.likes ? b.likes.length : 0;
+                return bLikes - aLikes;
+            });
+        }
+    }
+    
+    // Функция обновления счетчиков
+    function updateCounters() {
+        document.getElementById('total-problems').textContent = problems.length;
+        
+        let solutionsCount = 0;
+        let commentsCount = 0;
+        
+        problems.forEach(problem => {
+            solutionsCount += problem.solutions ? problem.solutions.length : 0;
+            commentsCount += problem.comments ? problem.comments.length : 0;
+        });
+        
+        document.getElementById('total-solutions').textContent = solutionsCount;
+        document.getElementById('total-comments').textContent = commentsCount;
+    }
+
+    // Настройка обработчиков событий
+    let eventListenersSetup = false;
+
+    function setupEventListeners() {
+        if (eventListenersSetup) return;
+        eventListenersSetup = true;
+        
+        console.log('Настройка обработчиков событий...');
+        
+        // Проверяем, что кнопка существует
+    const submitProblemBtn = document.getElementById('submit-problem');
+    if (submitProblemBtn) {
+        submitProblemBtn.addEventListener('click', addProblem);
+        console.log('Обработчик для добавления задачи установлен');
+    } else {
+        console.error('Кнопка submit-problem не найдена!');
+    }
+    
+    // Навигация
+        document.getElementById('nav-problems').addEventListener('click', function(e) {
+            e.preventDefault();
+            showProblemsList();
+            setActiveNav(this);
+        });
+        
+        document.getElementById('nav-add').addEventListener('click', function(e) {
+            e.preventDefault();
+            showAddProblemForm();
+            setActiveNav(this);
+        });
+        
+        document.getElementById('nav-about').addEventListener('click', function(e) {
+            e.preventDefault();
+            showFaqModal();
+            setActiveNav(this);
+        });
+        
+        // Добавление задачи
+        document.getElementById('submit-problem').addEventListener('click', addProblem);
+        
+        // Кнопка "Назад к списку задач"
+        document.getElementById('back-to-problems').addEventListener('click', showProblemsList);
+        
+        // Поиск
+        document.getElementById('search-btn').addEventListener('click', searchProblems);
+        document.getElementById('search-input').addEventListener('keypress', function(e) {
+            if (e.key === 'Enter') {
+                searchProblems();
+            }
+        });
+        
+        // Отправка решения и комментария
+        document.getElementById('submit-solution').addEventListener('click', addSolution);
+        document.getElementById('submit-comment').addEventListener('click', addComment);
+        
+        // Добавляем обработчик для кнопки изменения пароля
+            document.getElementById('change-password-btn').addEventListener('click', changePassword);
+            
+        // Настраиваем счетчики символов
+        setupCharacterCounters();
+        
+        // Система аккаунтов
+        document.getElementById('login-btn').addEventListener('click', showAuthModal);
+        document.getElementById('logout-btn').addEventListener('click', logout);
+        
+        // Модальное окно авторизации
+        document.getElementById('auth-modal').addEventListener('click', function(e) {
+            if (e.target === this) {
+                hideAuthModal();
+            }
+        });
+        
+        document.querySelectorAll('.auth-tab').forEach(tab => {
+            tab.addEventListener('click', function() {
+                switchAuthTab(this.getAttribute('data-tab'));
+            });
+        });
+        
+        // Обработчики для кнопок KaTeX-панели
+        document.querySelectorAll('.latex-btn').forEach(button => {
+            button.addEventListener('click', function() {
+                const textarea = document.getElementById('problem-content');
+                const code = this.getAttribute('data-insert');
+                insertAtCursor(textarea, code);
+                updateLatexPreview();
+                textarea.focus();
+            });
+        });
+        
+        // Обновление предпросмотра при изменении текста
+        const problemContentTextarea = document.getElementById('problem-content');
+        if (problemContentTextarea) {
+            problemContentTextarea.addEventListener('input', updateLatexPreview);
+        }
+        
+        document.getElementById('switch-to-register').addEventListener('click', function() {
+            switchAuthTab('register');
+        });
+        
+        document.getElementById('switch-to-login').addEventListener('click', function() {
+            switchAuthTab('login');
+        });
+        
+        document.getElementById('submit-login').addEventListener('click', login);
+        document.getElementById('submit-register').addEventListener('click', register);
+        
+        // Кнопки для входа при необходимости
+        document.getElementById('login-for-problem').addEventListener('click', showAuthModal);
+        document.getElementById('login-for-solution').addEventListener('click', showAuthModal);
+        document.getElementById('login-for-comment').addEventListener('click', showAuthModal);
+        
+        // Кнопка удаления задачи
+        document.getElementById('delete-problem').addEventListener('click', deleteCurrentProblem);
+        
+        // Модальное окно для изображений
+        document.getElementById('close-modal').addEventListener('click', function() {
+            document.getElementById('image-modal').style.display = 'none';
+        });
+        
+        document.getElementById('image-modal').addEventListener('click', function(e) {
+            if (e.target === this) {
+                document.getElementById('image-modal').style.display = 'none';
+            }
+        });
+        
+        // Модальное окно FAQ - ИСПРАВЛЕННЫЙ КОД АККОРДЕОНА
+        document.getElementById('close-faq').addEventListener('click', hideFaqModal);
+        
+        document.getElementById('faq-modal').addEventListener('click', function(e) {
+            if (e.target === this) {
+                hideFaqModal();
+            }
+        });
+        
+        // ИСПРАВЛЕННЫЙ ОБРАБОТЧИК ДЛЯ АККОРДЕОНА FAQ
+        document.getElementById('faq-modal').addEventListener('click', function(e) {
+            const question = e.target.closest('.faq-question');
+            if (question) {
+                const answer = question.nextElementSibling;
+                const icon = question.querySelector('i');
+                
+                // Закрываем все открытые ответы
+                document.querySelectorAll('.faq-answer').forEach(ans => {
+                    if (ans !== answer) {
+                        ans.style.display = 'none';
+                    }
+                });
+                
+                // Обновляем все иконки
+                document.querySelectorAll('.faq-question i').forEach(ic => {
+                    if (ic !== icon) {
+                        ic.classList.remove('fa-chevron-up');
+                        ic.classList.add('fa-chevron-down');
+                    }
+                });
+                
+                // Переключаем текущий ответ
+                if (answer.style.display === 'block') {
+                    answer.style.display = 'none';
+                    icon.classList.remove('fa-chevron-up');
+                    icon.classList.add('fa-chevron-down');
+                } else {
+                    answer.style.display = 'block';
+                    icon.classList.remove('fa-chevron-down');
+                    icon.classList.add('fa-chevron-up');
+                }
+                
+                e.stopPropagation();
+            }
+        });
+        
+        // Кнопки сортировки
+        document.getElementById('sort-by-date').addEventListener('click', function() {
+            setSortMethod('date');
+        });
+        
+        document.getElementById('sort-by-popularity').addEventListener('click', function() {
+            setSortMethod('popularity');
+        });
+        
+        // Предпросмотр задачи
+        document.getElementById('preview-problem').addEventListener('click', showProblemPreview);
+        document.getElementById('close-preview').addEventListener('click', hideProblemPreview);
+        document.getElementById('preview-modal').addEventListener('click', function(e) {
+            if (e.target === this) {
+                hideProblemPreview();
+            }
+        });
+        
+        // Навигация профиля
+        document.getElementById('nav-profile').addEventListener('click', function(e) {
+            e.preventDefault();
+            showProfile();
+            setActiveNav(this);
+        });
+        
+        document.getElementById('login-for-profile').addEventListener('click', showAuthModal);
+        
+        // Кнопка удаления аккаунта
+        document.getElementById('delete-account-btn').addEventListener('click', deleteAccount);
+        
+        // Обработчики для редактирования описания профиля
+        document.getElementById('account-description').addEventListener('input', updateCharacterCount);
+        document.getElementById('save-description-btn').addEventListener('click', saveDescription);
+        
+        // ДЕЛЕГИРОВАНИЕ СОБЫТИЙ ДЛЯ ДИНАМИЧЕСКИ СОЗДАВАЕМЫХ ЭЛЕМЕНТОВ
+        document.getElementById('problems-list').addEventListener('click', function(e) {
+            // Просмотр задачи
+            if (e.target.closest('.view-problem')) {
+                const button = e.target.closest('.view-problem');
+                const problemId = parseInt(button.getAttribute('data-id'));
+                showProblemDetail(problemId);
+            }
+            
+            // Удаление задачи из списка
+            if (e.target.closest('.delete-problem-list')) {
+                const button = e.target.closest('.delete-problem-list');
+                const problemId = parseInt(button.getAttribute('data-id'));
+                deleteProblem(problemId);
+            }
+            
+            // Реакции в списке задач
+            if (e.target.closest('.reaction-btn')) {
+                if (!currentUser) {
+                    showAuthModal();
+                    return;
+                }
+                
+                const button = e.target.closest('.reaction-btn');
+                const problemId = parseInt(button.getAttribute('data-id'));
+                const reactionType = button.getAttribute('data-type');
+                handleReaction('problem', problemId, null, null, reactionType);
+            }
+            
+            // Избранное в списке задач
+            if (e.target.closest('.favorite-btn')) {
+                if (!currentUser) {
+                    showAuthModal();
+                    return;
+                }
+                
+                const button = e.target.closest('.favorite-btn');
+                const problemId = parseInt(button.getAttribute('data-id'));
+                toggleFavorite(problemId);
+            }
+        });
+        
+        // Для деталей задачи (решения и комментарии)
+        document.getElementById('problem-detail').addEventListener('click', function(e) {
+            // Реакции на решения
+            if (e.target.closest('.solution .reaction-btn')) {
+                if (!currentUser) {
+                    showAuthModal();
+                    return;
+                }
+                
+                const button = e.target.closest('.reaction-btn');
+                const problemId = parseInt(button.getAttribute('data-problem'));
+                const solutionIndex = parseInt(button.getAttribute('data-index'));
+                const reactionType = button.getAttribute('data-type');
+                handleReaction('solution', problemId, solutionIndex, null, reactionType);
+            }
+            
+            // Реакции на комментарии
+            if (e.target.closest('.comment .reaction-btn')) {
+                if (!currentUser) {
+                    showAuthModal();
+                    return;
+                }
+                
+                const button = e.target.closest('.reaction-btn');
+                const problemId = parseInt(button.getAttribute('data-problem'));
+                const commentIndex = parseInt(button.getAttribute('data-index'));
+                const reactionType = button.getAttribute('data-type');
+                handleReaction('comment', problemId, null, commentIndex, reactionType);
+            }
+            
+            // Удаление решений
+            if (e.target.closest('.delete-solution')) {
+                const button = e.target.closest('.delete-solution');
+                const solutionIndex = parseInt(button.getAttribute('data-index'));
+                deleteSolution(currentProblemId, solutionIndex);
+            }
+            
+            // Удаление комментариев
+            if (e.target.closest('.delete-comment')) {
+                const button = e.target.closest('.delete-comment');
+                const commentIndex = parseInt(button.getAttribute('data-index'));
+                deleteComment(currentProblemId, commentIndex);
+            }
+            
+            // Отметка как лучшего решения
+            if (e.target.closest('.toggle-best-solution-btn')) {
+                const button = e.target.closest('.toggle-best-solution-btn');
+                const solutionId = parseInt(button.getAttribute('data-solution-id'));
+                toggleBestSolution(currentProblemId, solutionId);
+            }
+        });
+
+        // Обработчик для переключения темы
+        const themeToggle = document.getElementById('theme-toggle');
+        const savedTheme = localStorage.getItem('theme');
+        
+        if (savedTheme === 'dark') {
+            document.body.classList.add('dark-theme');
+            themeToggle.checked = true;
+        }
+        
+        themeToggle.addEventListener('change', function() {
+            if (this.checked) {
+                document.body.classList.add('dark-theme');
+                localStorage.setItem('theme', 'dark');
+            } else {
+                document.body.classList.remove('dark-theme');
+                localStorage.setItem('theme', 'light');
+            }
+            
+        });
+    }
+
+    // Функция показа списка задач
+    function showProblemsList() {
+        showLoading();
+        document.getElementById('problems-list').style.display = 'block';
+        document.getElementById('problem-detail').style.display = 'none';
+        document.getElementById('pagination-container').style.display = 'block';
+        document.getElementById('pagination-top-container').style.display = 'block';
+        document.getElementById('add-problem-section').style.display = 'none';
+        document.getElementById('profile-section').style.display = 'none';
+        
+        document.querySelector('.search-box').style.display = 'flex';
+        document.querySelector('.sort-options').style.display = 'flex';
+        
+        const searchInput = document.getElementById('search-input');
+        if (searchInput.value.trim() === '') {
+            isSearchActive = false;
+            searchResults = [];
+        }
+        
+        loadProblems();
+        hideLoading();
+    }
+
+    // Функция для безопасного вывода HTML
+    function escapeHtml(unsafe) {
+        if (!unsafe) return '';
+        return unsafe
+            .replace(/&/g, "&amp;")
+            .replace(/</g, "&lt;")
+            .replace(/>/g, "&gt;")
+            .replace(/"/g, "&quot;")
+            .replace(/'/g, "&#039;");
+    }
+
+    // Обработчик очистки поиска
+    function setupSearchHandlers() {
+        const searchInput = document.getElementById('search-input');
+        
+        searchInput.addEventListener('input', function() {
+            if (this.value.trim() === '') {
+                isSearchActive = false;
+                searchResults = [];
+                currentPage = 1;
+                loadProblems();
+            }
+        });
+    }
+
+    // Функция поиска задач
+    async function searchProblems() {
+        showLoading();    
+        
+        const searchTerm = document.getElementById('search-input').value.toLowerCase();
+        
+        currentPage = 1;
+        
+        if (searchTerm.trim() === '') {
+            isSearchActive = false;
+            searchResults = [];
+            loadProblems();
+            hideLoading();
+            return;
+        }
+        
+        try {
+            searchResults = await forumDB.searchProblems(searchTerm);
+            isSearchActive = true;
+            loadProblems(searchResults);
+        } catch (error) {
+            console.error('Ошибка при поиске:', error);
+            searchResults = [];
+            loadProblems();
+        }
+        
+        hideLoading();
+    }
+
+    // Функции для работы с системой аккаунтов (без изменений)
+    function showAuthModal() {
+        document.getElementById('auth-modal').style.display = 'flex';
+        switchAuthTab('login');
+    }
+
+    function hideAuthModal() {
+        document.getElementById('auth-modal').style.display = 'none';
+        document.getElementById('login-email').value = '';
+        document.getElementById('login-password').value = '';
+        document.getElementById('login-error').textContent = '';
+        
+        document.getElementById('register-name').value = '';
+        document.getElementById('register-email').value = '';
+        document.getElementById('register-password').value = '';
+        document.getElementById('register-password-confirm').value = '';
+        document.getElementById('register-error').textContent = '';
+    }
+
+    function switchAuthTab(tab) {
+        document.querySelectorAll('.auth-tab').forEach(t => {
+            t.classList.remove('active');
+        });
+        
+        document.querySelectorAll('.auth-form').forEach(form => {
+            form.classList.remove('active');
+        });
+        
+        document.querySelector(`.auth-tab[data-tab="${tab}"]`).classList.add('active');
+        document.getElementById(`${tab}-form`).classList.add('active');
+    }
+
+    function checkAuthState() {
+        if (currentUser) {
+            document.getElementById('login-btn').style.display = 'none';
+            document.getElementById('logout-btn').style.display = 'block';
+            document.getElementById('user-info').style.display = 'flex';
+            document.getElementById('user-name').textContent = currentUser.name;
+
+            const avatarElement = document.getElementById('user-avatar');
+            const initials = currentUser.name.split(' ').map(n => n[0]).join('').toUpperCase().substring(0, 2);
+            avatarElement.textContent = initials;
+            
+            if (document.getElementById('add-problem-section').style.display !== 'none') {
+                document.getElementById('problem-form').style.display = 'block';
+                document.getElementById('problem-login-required').style.display = 'none';
+            }
+            
+            if (document.getElementById('problem-detail').style.display !== 'none') {
+                document.getElementById('solution-form').style.display = 'block';
+                document.getElementById('solution-login-required').style.display = 'none';
+                document.getElementById('comment-form').style.display = 'block';
+                document.getElementById('comment-login-required').style.display = 'none';
+            }
+            
+            if (document.getElementById('profile-section').style.display !== 'none') {
+                document.getElementById('profile-content').style.display = 'block';
+                document.getElementById('profile-login-required').style.display = 'none';
+            }
+        } else {
+            document.getElementById('login-btn').style.display = 'block';
+            document.getElementById('logout-btn').style.display = 'none';
+            document.getElementById('user-info').style.display = 'none';
+            
+            if (document.getElementById('add-problem-section').style.display !== 'none') {
+                document.getElementById('problem-form').style.display = 'none';
+                document.getElementById('problem-login-required').style.display = 'block';
+            }
+            
+            if (document.getElementById('problem-detail').style.display !== 'none') {
+                document.getElementById('solution-form').style.display = 'none';
+                document.getElementById('solution-login-required').style.display = 'block';
+                document.getElementById('comment-form').style.display = 'none';
+                document.getElementById('comment-login-required').style.display = 'block';
+            }
+                       
+            if (document.getElementById('profile-section').style.display !== 'none') {
+                document.getElementById('profile-content').style.display = 'none';
+                document.getElementById('profile-login-required').style.display = 'block';
+            }
+        }
+    }
+
+    // Функция удаления текущей задачи
+    function deleteCurrentProblem() {
+        if (currentProblemId) {
+            deleteProblem(currentProblemId);
+        }
+    }
+
+    // Функция показа предпросмотра задачи
+    function showProblemPreview() {
+            const title = document.getElementById('problem-title').value;
+            const content = document.getElementById('problem-content').value;
+            const tags = document.getElementById('problem-tags').value;
+            const difficulty = document.getElementById('problem-difficulty').value;
+            
+            document.getElementById('preview-title').textContent = title || '(Без названия)';
+            document.getElementById('preview-content').textContent = content || '(Содержание отсутствует)';
+            
+            const tagsContainer = document.getElementById('preview-tags');
+            tagsContainer.innerHTML = '';
+            if (tags) {
+                tags.split(',').forEach(tag => {
+                    const tagEl = document.createElement('span');
+                    tagEl.className = 'tag';
+                    tagEl.textContent = tag.trim();
+                    tagsContainer.appendChild(tagEl);
+                });
+            }
+            
+            document.getElementById('preview-difficulty').textContent = `Сложность: ${difficulty}`;
+            document.getElementById('preview-modal').style.display = 'flex';
+            
+            // Рендерим формулы KaTeX в предпросмотре
+            setTimeout(function() {
+                renderMathInElement(document.getElementById('preview-modal'), {
+                    delimiters: [
+                        {left: '$$', right: '$$', display: true},
+                        {left: '$', right: '$', display: false},
+                        {left: '\\(', right: '\\)', display: false},
+                        {left: '\\[', right: '\\]', display: true}
+                    ],
+                    throwOnError: false
+                });
+            }, 100);
+        }
+
+    // Функция скрытия предпросмотра
+    function hideProblemPreview() {
+        document.getElementById('preview-modal').style.display = 'none';
+    }
+
+    // Функция подсчета символов в описании
+    function updateCharacterCount() {
+        const textarea = document.getElementById('account-description');
+        const countElement = document.getElementById('description-chars');
+        const count = textarea.value.length;
+        countElement.textContent = count;
+        
+        if (count > 100) {
+            countElement.style.color = '#e74c3c';
+        } else {
+            countElement.style.color = '#7f8c8d';
+        }
+    }
+
+    // Функция показа формы добавления задачи
+    function showAddProblemForm() {
+        document.getElementById('problems-list').style.display = 'none';
+        document.getElementById('problem-detail').style.display = 'none';
+        document.getElementById('pagination-container').style.display = 'none';
+        document.getElementById('pagination-top-container').style.display = 'none';
+        document.getElementById('add-problem-section').style.display = 'block';
+        document.getElementById('profile-section').style.display = 'none';
+        
+        document.querySelector('.search-box').style.display = 'none';
+        document.querySelector('.sort-options').style.display = 'none';
+        
+        if (currentUser) {
+            document.getElementById('problem-form').style.display = 'block';
+            document.getElementById('problem-login-required').style.display = 'none';
+        } else {
+            document.getElementById('problem-form').style.display = 'none';
+            document.getElementById('problem-login-required').style.display = 'block';
+        }
+    }
+
+    // Функция показа профиля
+    function showProfile() {
+        document.getElementById('problems-list').style.display = 'none';
+        document.getElementById('problem-detail').style.display = 'none';
+        document.getElementById('pagination-container').style.display = 'none';
+        document.getElementById('pagination-top-container').style.display = 'none';
+        document.getElementById('add-problem-section').style.display = 'none';
+        document.getElementById('profile-section').style.display = 'block';
+        
+        document.querySelector('.search-box').style.display = 'none';
+        document.querySelector('.sort-options').style.display = 'none';
+        
+        if (currentUser) {
+            document.getElementById('profile-content').style.display = 'block';
+            document.getElementById('profile-login-required').style.display = 'none';
+            loadProfileData();
+        } else {
+            document.getElementById('profile-content').style.display = 'none';
+            document.getElementById('profile-login-required').style.display = 'block';
+        }
+    }
+
+    // Функция загрузки данных профиля
+async function loadProfileData() {
+    if (!currentUser) return;
+    
+    showLoading();
+    
+    try {
+        // Обновляем данные пользователя из базы
+        const freshUser = await forumDB.getUser(currentUser.id);
+        if (freshUser) {
+            currentUser = { ...currentUser, ...freshUser };
+            localStorage.setItem('current_user', JSON.stringify(currentUser));
+        }
+        
+        const avatarElement = document.getElementById('profile-avatar');
+        const initials = currentUser.name.split(' ').map(n => n[0]).join('').toUpperCase().substring(0, 2);
+        avatarElement.textContent = initials;
+        
+        document.getElementById('profile-user-name').textContent = currentUser.name;
+        
+        const descriptionElement = document.getElementById('profile-description');
+        if (currentUser.description) {
+            descriptionElement.textContent = currentUser.description;
+        } else {
+            descriptionElement.textContent = 'Описание профиля не добавлено';
+            descriptionElement.style.fontStyle = 'italic';
+            descriptionElement.style.color = '#7f8c8d';
+        }
+        
+        document.getElementById('account-description').value = currentUser.description || '';
+        updateCharacterCount();
+        
+        const userData = await forumDB.getUser(currentUser.id);
+        if (userData && userData.registration_date) {
+            document.getElementById('profile-registration-date').textContent = userData.registration_date;
+        } else {
+            document.getElementById('profile-registration-date').textContent = 'недавно';
+        }
+        
+        // Загружаем статистику и контент параллельно для скорости
+        await Promise.all([
+            calculateUserStats(),
+            loadUserContent()
+        ]);
+        
+    } catch (error) {
+        console.error('Ошибка при загрузке профиля:', error);
+        showErrorMessage('Ошибка при загрузке данных профиля');
+    } finally {
+        hideLoading();
+    }
+}
+
+    // Функция расчета статистики пользователя
+async function calculateUserStats() {
+    if (!currentUser) return;
+    
+    showLoading();
+    
+    try {
+        // Загружаем ВСЕ задачи из базы для точной статистики
+        const allProblems = await forumDB.getAllProblems();
+        
+        // Загружаем решения и комментарии пользователя
+        let userSolutions = [];
+        let userComments = [];
+        
+        for (const problem of allProblems) {
+            const fullProblem = await forumDB.getProblem(problem.id);
+            
+            if (fullProblem && fullProblem.solutions) {
+                fullProblem.solutions.forEach(solution => {
+                    if (solution.author_id === currentUser.id) {
+                        userSolutions.push(solution);
+                    }
+                });
+            }
+            
+            if (fullProblem && fullProblem.comments) {
+                fullProblem.comments.forEach(comment => {
+                    if (comment.author_id === currentUser.id) {
+                        userComments.push(comment);
+                    }
+                });
+            }
+        }
+        
+        // Инициализируем счетчики
+        let problemsCount = 0;
+        let solutionsCount = userSolutions.length;
+        let commentsCount = userComments.length;
+        let favoritesCount = 0;
+        let bestSolutionsCount = 0;
+        let likesProblems = 0;
+        let likesSolutions = 0;
+        let likesComments = 0;
+        
+        // Убедимся, что allProblems - массив
+        if (allProblems && Array.isArray(allProblems)) {
+            allProblems.forEach(problem => {
+                // Задачи пользователя
+                if (problem.author_id === currentUser.id) {
+                    problemsCount++;
+                    likesProblems += (problem.likes && Array.isArray(problem.likes)) ? problem.likes.length : 0;
+                }
+                
+                // Избранные задачи
+                if (problem.favorites && Array.isArray(problem.favorites) && problem.favorites.includes(currentUser.id)) {
+                    favoritesCount++;
+                }
+                
+                // Лучшие решения в задачах других пользователей
+                if (problem.best_solution_id && problem.author_id !== currentUser.id) {
+                    const bestSolution = userSolutions.find(s => s.id === problem.best_solution_id);
+                    if (bestSolution) {
+                        bestSolutionsCount++;
+                    }
+                }
+            });
+        }
+        
+        // Считаем лайки для решений и комментариев
+        userSolutions.forEach(solution => {
+            likesSolutions += (solution.likes && Array.isArray(solution.likes)) ? solution.likes.length : 0;
+        });
+        
+        userComments.forEach(comment => {
+            likesComments += (comment.likes && Array.isArray(comment.likes)) ? comment.likes.length : 0;
+        });
+        
+        // Обновляем статистику в интерфейсе
+        document.getElementById('stat-problems').textContent = problemsCount;
+        document.getElementById('stat-solutions').textContent = solutionsCount;
+        document.getElementById('stat-comments').textContent = commentsCount;
+        document.getElementById('stat-favorites').textContent = favoritesCount;
+        document.getElementById('stat-best-solutions').textContent = bestSolutionsCount;
+        document.getElementById('stat-likes-problems').textContent = likesProblems;
+        document.getElementById('stat-likes-solutions').textContent = likesSolutions;
+        document.getElementById('stat-likes-comments').textContent = likesComments;
+        
+    } catch (error) {
+        console.error('Ошибка при расчете статистики:', error);
+        // Устанавливаем нули в случае ошибки
+        document.getElementById('stat-problems').textContent = 0;
+        document.getElementById('stat-solutions').textContent = 0;
+        document.getElementById('stat-comments').textContent = 0;
+        document.getElementById('stat-favorites').textContent = 0;
+        document.getElementById('stat-best-solutions').textContent = 0;
+        document.getElementById('stat-likes-problems').textContent = 0;
+        document.getElementById('stat-likes-solutions').textContent = 0;
+        document.getElementById('stat-likes-comments').textContent = 0;
+    } finally {
+        hideLoading();
+    }
+}
+
+    // Функция загрузки контента пользователя
+async function loadUserContent() {
+    if (!currentUser) return;
+    
+    try {
+        // Загружаем все задачи для получения полных данных
+        const allProblems = await forumDB.getAllProblems();
+        
+        // ЗАГРУЖАЕМ РЕШЕНИЯ И КОММЕНТАРИИ ПОЛЬЗОВАТЕЛЯ ОТДЕЛЬНО
+        let userSolutions = [];
+        let userComments = [];
+        
+        // Для каждой задачи загружаем полные данные с решениями и комментариями
+        for (const problem of allProblems) {
+            const fullProblem = await forumDB.getProblem(problem.id);
+            
+            if (fullProblem && fullProblem.solutions) {
+                fullProblem.solutions.forEach(solution => {
+                    if (solution.author_id === currentUser.id) {
+                        userSolutions.push({
+                            solution: solution,
+                            problemId: problem.id,
+                            problemTitle: problem.title
+                        });
+                    }
+                });
+            }
+            
+            if (fullProblem && fullProblem.comments) {
+                fullProblem.comments.forEach(comment => {
+                    if (comment.author_id === currentUser.id) {
+                        userComments.push({
+                            comment: comment,
+                            problemId: problem.id,
+                            problemTitle: problem.title
+                        });
+                    }
+                });
+            }
+        }
+        
+        const problemsList = document.getElementById('profile-problems-list');
+        const solutionsList = document.getElementById('profile-solutions-list');
+        const commentsList = document.getElementById('profile-comments-list');
+        const favoritesList = document.getElementById('profile-favorites-list');
+        const bestSolutionsList = document.getElementById('profile-best-solutions-list');
+        
+        // Устанавливаем пустое состояние по умолчанию
+        problemsList.innerHTML = '<div class="empty-profile-list">Вы еще не создали ни одной задачи</div>';
+        solutionsList.innerHTML = '<div class="empty-profile-list">Вы еще не добавили ни одного решения</div>';
+        commentsList.innerHTML = '<div class="empty-profile-list">Вы еще не оставили ни одного комментария</div>';
+        favoritesList.innerHTML = '<div class="empty-profile-list">У вас нет избранных задач</div>';
+        bestSolutionsList.innerHTML = '<div class="empty-profile-list">У вас нет лучших решений</div>';
+        
+        // Проверяем, что allProblems существует и является массивом
+        if (!allProblems || !Array.isArray(allProblems)) {
+            return;
+        }
+        
+        // Задачи пользователя
+        const userProblems = allProblems.filter(p => p.author_id === currentUser.id);
+        if (userProblems.length > 0) {
+            problemsList.innerHTML = '';
+            userProblems.forEach(problem => {
+                const problemItem = document.createElement('div');
+                problemItem.className = 'profile-list-item';
+                const problemDate = problem.created_at ? new Date(problem.created_at).toLocaleDateString('ru-RU') : problem.date;
+                problemItem.innerHTML = `
+                    <a href="#" class="view-problem-from-profile" data-id="${problem.id}">${problem.title}</a>
+                    <div class="problem-meta">
+                        <span>${problemDate}</span>
+                        <span>Лайков: ${problem.likes ? problem.likes.length : 0}</span>
+                    </div>
+                `;
+                problemsList.appendChild(problemItem);
+            });
+        }
+        
+        // Решения пользователя
+        if (userSolutions.length > 0) {
+            solutionsList.innerHTML = '';
+            userSolutions.forEach(item => {
+                const solutionItem = document.createElement('div');
+                solutionItem.className = 'profile-list-item';
+                const solutionDate = item.solution.created_at ? new Date(item.solution.created_at).toLocaleDateString('ru-RU') : (item.solution.date || 'Неизвестно');
+                solutionItem.innerHTML = `
+                    <a href="#" class="view-problem-from-profile" data-id="${item.problemId}">К задаче: ${item.problemTitle}</a>
+                    <div class="problem-meta">
+                        <span>${solutionDate}</span>
+                        <span>Лайков: ${item.solution.likes ? item.solution.likes.length : 0}</span>
+                    </div>
+                `;
+                solutionsList.appendChild(solutionItem);
+            });
+        }
+        
+        // Комментарии пользователя
+        if (userComments.length > 0) {
+            commentsList.innerHTML = '';
+            userComments.forEach(item => {
+                const commentItem = document.createElement('div');
+                commentItem.className = 'profile-list-item';
+                const commentDate = item.comment.created_at ? new Date(item.comment.created_at).toLocaleDateString('ru-RU') : (item.comment.date || 'Неизвестно');
+                commentItem.innerHTML = `
+                    <a href="#" class="view-problem-from-profile" data-id="${item.problemId}">К задаче: ${item.problemTitle}</a>
+                    <div class="problem-meta">
+                        <span>${commentDate}</span>
+                        <span>Лайков: ${item.comment.likes ? item.comment.likes.length : 0}</span>
+                    </div>
+                `;
+                commentsList.appendChild(commentItem);
+            });
+        }
+        
+        // Избранные задачи пользователя
+        const userFavorites = allProblems.filter(problem => 
+            problem.favorites && Array.isArray(problem.favorites) && problem.favorites.includes(currentUser.id)
+        );
+        
+        if (userFavorites.length > 0) {
+            favoritesList.innerHTML = '';
+            userFavorites.forEach(problem => {
+                const favoriteItem = document.createElement('div');
+                favoriteItem.className = 'profile-list-item';
+                const problemDate = problem.created_at ? new Date(problem.created_at).toLocaleDateString('ru-RU') : problem.date;
+                favoriteItem.innerHTML = `
+                    <a href="#" class="view-problem-from-profile" data-id="${problem.id}">${problem.title}</a>
+                    <div class="problem-meta">
+                        <span>${problemDate}</span>
+                        <span>Автор: ${problem.author}</span>
+                    </div>
+                `;
+                favoritesList.appendChild(favoriteItem);
+            });
+        }
+        
+        // Лучшие решения пользователя
+        let userBestSolutions = [];
+        
+        // Для каждой задачи проверяем, есть ли лучшее решение от текущего пользователя
+        for (const problem of allProblems) {
+            if (problem.best_solution_id) {
+                const fullProblem = await forumDB.getProblem(problem.id);
+                if (fullProblem && fullProblem.solutions) {
+                    const bestSolution = fullProblem.solutions.find(s => s.id === problem.best_solution_id);
+                    if (bestSolution && bestSolution.author_id === currentUser.id) {
+                        userBestSolutions.push({
+                            solution: bestSolution,
+                            problemId: problem.id,
+                            problemTitle: problem.title,
+                            problemAuthor: problem.author
+                        });
+                    }
+                }
+            }
+        }
+        
+        if (userBestSolutions.length > 0) {
+            bestSolutionsList.innerHTML = '';
+            userBestSolutions.forEach(item => {
+                const bestSolutionItem = document.createElement('div');
+                bestSolutionItem.className = 'profile-list-item';
+                const solutionDate = item.solution.created_at ? new Date(item.solution.created_at).toLocaleDateString('ru-RU') : (item.solution.date || 'Неизвестно');
+                bestSolutionItem.innerHTML = `
+                    <a href="#" class="view-problem-from-profile" data-id="${item.problemId}">К задаче: ${item.problemTitle}</a>
+                    <div class="problem-meta">
+                        <span>${solutionDate}</span>
+                        <span>Автор задачи: ${item.problemAuthor}</span>
+                        <span>Лайков: ${item.solution.likes ? item.solution.likes.length : 0}</span>
+                    </div>
+                `;
+                bestSolutionsList.appendChild(bestSolutionItem);
+            });
+        }
+        
+        // Добавляем обработчики событий для ссылок просмотра задач
+        document.querySelectorAll('.view-problem-from-profile').forEach(link => {
+            link.addEventListener('click', function(e) {
+                e.preventDefault();
+                const problemId = parseInt(this.getAttribute('data-id'));
+                showProblemDetail(problemId);
+                setActiveNav(document.getElementById('nav-problems'));
+            });
+        });
+        
+    } catch (error) {
+        console.error('Ошибка при загрузке контента пользователя:', error);
+    }
+}
+
+    // Вспомогательная функция для установки активной навигации
+    function setActiveNav(activeNav) {
+        document.querySelectorAll('nav ul li a').forEach(nav => {
+            nav.classList.remove('active');
+        });
+        activeNav.classList.add('active');
+    }
+
+    // Функция показа сообщения об успехе
+    function showSuccessMessage(message) {
+        const successMessage = document.getElementById('success-message');
+        successMessage.querySelector('span').textContent = message;
+        successMessage.style.display = 'flex';
+        
+        setTimeout(() => {
+            successMessage.style.display = 'none';
+        }, 4000);
+    }
+
+    // Показать модальное окно FAQ
+    function showFaqModal() {
+        document.getElementById('faq-modal').style.display = 'flex';
+    renderMathInElement(document.getElementById('faq-modal'), {
+                            delimiters: [
+                                {left: '$$', right: '$$', display: true},
+                                {left: '$', right: '$', display: false},
+                                {left: '\\(', right: '\\)', display: false},
+                                {left: '\\[', right: '\\]', display: true}
+                            ],
+                            throwOnError: false
+                        });
+    }
+
+    // Скрыть модальное окно FAQ
+    function hideFaqModal() {
+        document.getElementById('faq-modal').style.display = 'none';
+    }
+
+    // Проверка, является ли пользователь администратором
+    function isAdmin(user) {
+        return user && user.name === "Сайт MathProj";
+    }
+
+    // Установка метода сортировки
+    function setSortMethod(method) {
+        currentSort = method;
+        showLoading();
+        document.querySelectorAll('.sort-btn').forEach(btn => {
+            btn.classList.remove('active');
+        });
+        
+        if (method === 'date') {
+            document.getElementById('sort-by-date').classList.add('active');
+        } else {
+            document.getElementById('sort-by-popularity').classList.add('active');
+        }
+        
+        currentPage = 1;
+        loadProblems();
+        hideLoading();
+    }
+
+    // Функция отображения деталей задачи
+    async function showProblemDetail(problemId) {
+    showLoading();
+    
+    try {
+        const problem = await forumDB.getProblem(problemId);
+        
+        if (problem) {
+            currentProblemId = problemId;
+            
+            // Обновляем локальную копию
+            const localProblemIndex = problems.findIndex(p => p.id === problemId);
+            if (localProblemIndex !== -1) {
+                problems[localProblemIndex] = { ...problems[localProblemIndex], ...problem };
+            } else {
+                problems.push(problem);
+            }
+            
+            // Для совместимости
+            problem.authorId = problem.author_id;
+            problem.bestSolutionId = problem.best_solution_id;
+            problem.date = problem.created_at ? new Date(problem.created_at).toLocaleDateString('ru-RU') : problem.date;
+            
+            if (problem.solutions) {
+                problem.solutions.forEach(solution => {
+                    solution.authorId = solution.author_id;
+                });
+            }
+            
+            if (problem.comments) {
+                problem.comments.forEach(comment => {
+                    comment.authorId = comment.author_id;
+                });
+            }
+            
+            document.getElementById('detail-title').textContent = problem.title;
+            document.getElementById('detail-content').textContent = problem.content;
+            document.getElementById('detail-author').textContent = `Автор: ${problem.author}`;
+            document.getElementById('detail-date').textContent = `Дата: ${problem.date || 'Неизвестно'}`;
+            
+            const tagsContainer = document.getElementById('detail-tags');
+            tagsContainer.innerHTML = '';
+            
+            if (problem.tags) {
+                problem.tags.forEach(tag => {
+                    const tagEl = document.createElement('span');
+                    tagEl.className = 'tag';
+                    tagEl.textContent = tag;
+                    tagsContainer.appendChild(tagEl);
+                });
+            }
+            
+            const difficultyTag = document.createElement('span');
+            difficultyTag.className = 'tag';
+            difficultyTag.textContent = `Сложность: ${problem.difficulty}`;
+            tagsContainer.appendChild(difficultyTag);
+            
+            const imagesContainer = document.getElementById('detail-images');
+            imagesContainer.innerHTML = '';
+            
+            if (problem.images && problem.images.length > 0) {
+                problem.images.forEach(image => {
+                    const img = document.createElement('img');
+                    img.src = image.data;
+                    img.className = 'attached-image';
+                    img.onclick = function() {
+                        openImageModal(image.data);
+                    };
+                    imagesContainer.appendChild(img);
+                });
+            }
+            
+            const favoriteBtn = document.getElementById('toggle-favorite');
+            const isFavorited = currentUser && problem.favorites && problem.favorites.includes(currentUser.id);
+            favoriteBtn.className = `favorite-btn ${isFavorited ? 'favorited' : ''}`;
+            favoriteBtn.innerHTML = `<i class="${isFavorited ? 'fas' : 'far'} fa-star"></i>`;
+            favoriteBtn.title = isFavorited ? 'Удалить из избранного' : 'Добавить в избранное';
+            
+            favoriteBtn.onclick = function() {
+                if (!currentUser) {
+                    showAuthModal();
+                    return;
+                }
+                toggleFavorite(problemId);
+            };
+                
+            const reactionsContainer = document.getElementById('problem-reactions');
+            reactionsContainer.innerHTML = '';
+            
+            const userLiked = currentUser && problem.likes && problem.likes.includes(currentUser.id);
+            const userDisliked = currentUser && problem.dislikes && problem.dislikes.includes(currentUser.id);
+            
+            const likeBtn = document.createElement('button');
+            likeBtn.className = `reaction-btn ${userLiked ? 'liked' : ''}`;
+            likeBtn.setAttribute('data-type', 'like');
+            likeBtn.setAttribute('data-id', problem.id);
+            likeBtn.innerHTML = `<i class="fas fa-thumbs-up"></i> <span class="reaction-count">${problem.likes ? problem.likes.length : 0}</span>`;
+            
+            const dislikeBtn = document.createElement('button');
+            dislikeBtn.className = `reaction-btn ${userDisliked ? 'disliked' : ''}`;
+            dislikeBtn.setAttribute('data-type', 'dislike');
+            dislikeBtn.setAttribute('data-id', problem.id);
+            dislikeBtn.innerHTML = `<i class="fas fa-thumbs-down"></i> <span class="reaction-count">${problem.dislikes ? problem.dislikes.length : 0}</span>`;
+            
+            likeBtn.addEventListener('click', function() {
+                if (!currentUser) {
+                    showAuthModal();
+                    return;
+                }
+                handleReaction('problem', problem.id, null, null, 'like');
+            });
+            
+            dislikeBtn.addEventListener('click', function() {
+                if (!currentUser) {
+                    showAuthModal();
+                    return;
+                }
+                handleReaction('problem', problem.id, null, null, 'dislike');
+            });
+            
+            reactionsContainer.appendChild(likeBtn);
+            reactionsContainer.appendChild(dislikeBtn);
+            
+            if (currentUser && (problem.author_id === currentUser.id || isAdmin(currentUser))) {
+                document.getElementById('problem-actions').style.display = 'block';
+            } else {
+                document.getElementById('problem-actions').style.display = 'none';
+            }
+            
+            const solutionsList = document.getElementById('solutions-list');
+            solutionsList.innerHTML = '';
+            
+            if (problem.solutions && problem.solutions.length > 0) {
+                problem.solutions.forEach((solution, index) => {
+                    const userLikedSolution = currentUser && solution.likes && solution.likes.includes(currentUser.id);
+                    const userDislikedSolution = currentUser && solution.dislikes && solution.dislikes.includes(currentUser.id);
+                    const isBestSolution = problem.best_solution_id === solution.id;
+                    
+                    const solutionEl = document.createElement('div');
+                    solutionEl.className = `solution ${isBestSolution ? 'best-solution' : ''}`;
+                    
+                    const canDeleteSolution = currentUser && (solution.author_id === currentUser.id || isAdmin(currentUser));
+                    const canMarkAsBest = currentUser && problem.author_id === currentUser.id;
+                    
+                    let solutionImages = '';
+                    if (solution.images && solution.images.length > 0) {
+                        solutionImages = `<div class="attached-images">`;
+                        solution.images.forEach(image => {
+                            solutionImages += `<img src="${image.data}" class="attached-image" onclick="openImageModal('${image.data}')">`;
+                        });
+                        solutionImages += `</div>`;
+                    }
+                    
+                    solutionEl.innerHTML = `
+                        ${isBestSolution ? 
+                            `<div class="best-solution-badge">
+                                <i class="fas fa-crown"></i> Лучшее решение
+                            </div>` : ''}
+                        ${canDeleteSolution ? 
+                            `<button class="delete-btn delete-solution" data-index="${index}">
+                                <i class="fas fa-times"></i>
+                            </button>` : ''}
+                        <p>${solution.content}</p>
+                        ${solutionImages}
+                        <div class="problem-meta">
+                            <span>ID задачи: ${problem.id}</span>
+                            <span>Автор: ${solution.author}</span>
+                            <span>Дата: ${solution.date || (solution.created_at ? new Date(solution.created_at).toLocaleDateString('ru-RU') : 'Неизвестно')}</span>
+                        </div>
+                        <div class="reactions">
+                            <button class="reaction-btn ${userLikedSolution ? 'liked' : ''}" data-type="like" data-problem="${problem.id}" data-index="${index}">
+                                <i class="fas fa-thumbs-up"></i>
+                                <span class="reaction-count">${solution.likes ? solution.likes.length : 0}</span>
+                            </button>
+                            <button class="reaction-btn ${userDislikedSolution ? 'disliked' : ''}" data-type="dislike" data-problem="${problem.id}" data-index="${index}">
+                                <i class="fas fa-thumbs-down"></i>
+                                <span class="reaction-count">${solution.dislikes ? solution.dislikes.length : 0}</span>
+                            </button>
+                            ${canMarkAsBest ? 
+                                `<button class="best-solution-btn toggle-best-solution-btn" data-solution-id="${solution.id}">
+                                    <i class="fas fa-crown"></i> ${isBestSolution ? 'Снять отметку' : 'Отметить как лучшее'}
+                                </button>` : ''}
+                        </div>
+                    `;
+                    solutionsList.appendChild(solutionEl);
+                });
+            } else {
+                solutionsList.innerHTML = `
+                    <div class="empty-state">
+                        <i class="fas fa-lightbulb"></i>
+                        <p>Пока нет решений. Будьте первым, кто предложит решение!</p>
+                    </div>
+                `;
+            }
+            
+            const commentsList = document.getElementById('comments-list');
+            commentsList.innerHTML = '';
+            
+            if (problem.comments && problem.comments.length > 0) {
+                problem.comments.forEach((comment, index) => {
+                    const userLikedComment = currentUser && comment.likes && comment.likes.includes(currentUser.id);
+                    const userDislikedComment = currentUser && comment.dislikes && comment.dislikes.includes(currentUser.id);
+                    
+                    const commentEl = document.createElement('div');
+                    commentEl.className = 'comment';
+                    
+                    const canDeleteComment = currentUser && (comment.author_id === currentUser.id || isAdmin(currentUser));
+                    
+                    let commentImages = '';
+                    if (comment.images && comment.images.length > 0) {
+                        commentImages = `<div class="attached-images">`;
+                        comment.images.forEach(image => {
+                            commentImages += `<img src="${image.data}" class="attached-image" onclick="openImageModal('${image.data}')">`;
+                        });
+                        commentImages += `</div>`;
+                    }
+                    
+                    commentEl.innerHTML = `
+                        ${canDeleteComment ? 
+                            `<button class="delete-btn delete-comment" data-index="${index}">
+                                <i class="fas fa-times"></i>
+                            </button>` : ''}
+                        <div class="comment-meta">
+                            <span>Автор: ${comment.author}</span>
+                            <span>Дата: ${comment.date || (comment.created_at ? new Date(comment.created_at).toLocaleDateString('ru-RU') : 'Неизвестно')}</span>
+                        </div>
+                        <p>${comment.content}</p>
+                        ${commentImages}
+                        <div class="reactions">
+                            <button class="reaction-btn ${userLikedComment ? 'liked' : ''}" data-type="like" data-problem="${problem.id}" data-index="${index}">
+                                <i class="fas fa-thumbs-up"></i>
+                                <span class="reaction-count">${comment.likes ? comment.likes.length : 0}</span>
+                            </button>
+                            <button class="reaction-btn ${userDislikedComment ? 'disliked' : ''}" data-type="dislike" data-problem="${problem.id}" data-index="${index}">
+                                <i class="fas fa-thumbs-down"></i>
+                                <span class="reaction-count">${comment.dislikes ? comment.dislikes.length : 0}</span>
+                            </button>
+                        </div>
+                    `;
+                    commentsList.appendChild(commentEl);
+                });
+            } else {
+                commentsList.innerHTML = `
+                    <div class="empty-state">
+                        <i class="fas fa-comments"></i>
+                        <p>Пока нет комментариев. Будьте первым, кто оставит комментарий!</p>
+                    </div>
+                `;
+            }
+            
+            if (currentUser) {
+                document.getElementById('solution-form').style.display = 'block';
+                document.getElementById('solution-login-required').style.display = 'none';
+                document.getElementById('comment-form').style.display = 'block';
+                document.getElementById('comment-login-required').style.display = 'none';
+            } else {
+                document.getElementById('solution-form').style.display = 'none';
+                document.getElementById('solution-login-required').style.display = 'block';
+                document.getElementById('comment-form').style.display = 'none';
+                document.getElementById('comment-login-required').style.display = 'block';
+            }
+            
+            // Скрываем элементы, которые не нужны при просмотре деталей задачи
+            document.getElementById('problems-list').style.display = 'none';
+            document.getElementById('problem-detail').style.display = 'block';
+            document.getElementById('pagination-container').style.display = 'none';
+            document.getElementById('pagination-top-container').style.display = 'none';
+            document.getElementById('add-problem-section').style.display = 'none';
+            document.getElementById('profile-section').style.display = 'none';
+            
+            // ДОБАВЛЕНО: Скрываем строку поиска и сортировку
+            document.querySelector('.search-box').style.display = 'none';
+            document.querySelector('.sort-options').style.display = 'none';
+            
+            // Рендерим формулы KaTeX в деталях задачи
+            setTimeout(function() {
+                renderMathInElement(document.getElementById('problem-detail'), {
+                    delimiters: [
+                        {left: '$$', right: '$$', display: true},
+                        {left: '$', right: '$', display: false},
+                        {left: '\\(', right: '\\)', display: false},
+                        {left: '\\[', right: '\\]', display: true}
+                    ],
+                    throwOnError: false
+                });
+            }, 100);
+        }
+    } catch (error) {
+        console.error('Ошибка при загрузке задачи:', error);
+        alert('Ошибка при загрузке задачи.');
+    }
+    
+    hideLoading();
+}
+
+    // Функция открытия модального окна с изображением
+    function openImageModal(imageData) {
+        document.getElementById('modal-image').src = imageData;
+        document.getElementById('image-modal').style.display = 'block';
+    }
+
+    // Настройка обработчиков для загрузки изображений
+    function setupImageUploadHandlers() {
+        const problemImageInput = document.getElementById('problem-images');
+        problemImageInput.addEventListener('change', function() {
+            handleImageSelection(this, 'problem');
+        });
+        
+        const solutionImageInput = document.getElementById('solution-images');
+        solutionImageInput.addEventListener('change', function() {
+            handleImageSelection(this, 'solution');
+        });
+        
+        const commentImageInput = document.getElementById('comment-images');
+        commentImageInput.addEventListener('change', function() {
+            handleImageSelection(this, 'comment');
+        });
+    }
+
+    // Обработка выбора изображений
+    function handleImageSelection(input, type) {
+        const files = input.files;
+        const fileNamesElement = document.getElementById(`${type}-file-names`);
+        const previewContainer = document.getElementById(`${type}-image-previews`);
+        
+        previewContainer.innerHTML = '';
+        
+        if (files.length > MAX_IMAGES_PER_ITEM) {
+            alert(`Можно загрузить не более ${MAX_IMAGES_PER_ITEM} изображений`);
+            input.value = '';
+            fileNamesElement.textContent = '';
+            return;
+        }
+        
+        let validFiles = [];
+        
+        for (let i = 0; i < files.length; i++) {
+            const file = files[i];
+            
+            if (!file.type.match('image/jpeg') && !file.type.match('image/png')) {
+                alert(`Файл "${file.name}" не является изображением JPEG или PNG`);
+                continue;
+            }
+            
+            if (file.size > MAX_IMAGE_SIZE) {
+                alert(`Файл "${file.name}" слишком большой. Максимальный размер: 2 МБ.`);
+                continue;
+            }
+            
+            validFiles.push(file);
+        }
+        
+        if (validFiles.length === 0) {
+            input.value = '';
+            fileNamesElement.textContent = '';
+            previewContainer.innerHTML = '';
+            return;
+        }
+        
+        const dataTransfer = new DataTransfer();
+        validFiles.forEach(file => dataTransfer.items.add(file));
+        input.files = dataTransfer.files;
+        
+        if (validFiles.length > 0) {
+            fileNamesElement.textContent = `Выбрано файлов: ${validFiles.length}`;
+        } else {
+            fileNamesElement.textContent = '';
+        }
+        
+        for (let i = 0; i < validFiles.length; i++) {
+            const file = validFiles[i];
+            const reader = new FileReader();
+            
+            reader.onload = function(e) {
+                const img = new Image();
+                img.onload = function() {
+                    if (img.width > MAX_IMAGE_DIMENSION || img.height > MAX_IMAGE_DIMENSION) {
+                        alert(`Изображение "${file.name}" слишком большое. Максимальный размер: ${MAX_IMAGE_DIMENSION}x${MAX_IMAGE_DIMENSION} пикселей.`);
+                        validFiles = validFiles.filter(f => f !== file);
+                        const newDataTransfer = new DataTransfer();
+                        validFiles.forEach(f => newDataTransfer.items.add(f));
+                        input.files = newDataTransfer.files;
+                        
+                        if (validFiles.length === 0) {
+                            fileNamesElement.textContent = '';
+                            previewContainer.innerHTML = '';
+                        } else {
+                            fileNamesElement.textContent = `Выбрано файлов: ${validFiles.length}`;
+                        }
+                        return;
+                    }
+                    
+                    const preview = document.createElement('div');
+                    preview.className = 'image-preview';
+                    
+                    const previewImg = document.createElement('img');
+                    previewImg.src = e.target.result;
+                    
+                    const removeBtn = document.createElement('button');
+                    removeBtn.className = 'remove-image';
+                    removeBtn.innerHTML = '×';
+                    removeBtn.addEventListener('click', function() {
+                        preview.remove();
+                        const updatedFiles = Array.from(input.files).filter(f => f !== file);
+                        const dt = new DataTransfer();
+                        updatedFiles.forEach(f => dt.items.add(f));
+                        input.files = dt.files;
+                        
+                        if (updatedFiles.length === 0) {
+                            fileNamesElement.textContent = '';
+                        } else {
+                            fileNamesElement.textContent = `Выбрано файлов: ${updatedFiles.length}`;
+                        }
+                    });
+                    
+                    preview.appendChild(previewImg);
+                    preview.appendChild(removeBtn);
+                    previewContainer.appendChild(preview);
+                };
+                img.src = e.target.result;
+            };
+            
+            reader.onerror = function() {
+                alert(`Ошибка при чтении файла ${file.name}`);
+            };
+            
+            reader.readAsDataURL(file);
+        }
+    }
+
+    // Функция чтения файлов изображений с оптимизацией
+    function readImageFiles(files) {
+        return new Promise((resolve) => {
+            const images = [];
+            let filesProcessed = 0;
+            
+            const validFiles = Array.from(files).filter(file => file.size <= MAX_IMAGE_SIZE);
+            
+            if (validFiles.length === 0) {
+                resolve([]);
+                return;
+            }
+            
+            for (let i = 0; i < validFiles.length; i++) {
+                const file = validFiles[i];
+                const reader = new FileReader();
+                
+                reader.onload = function(e) {
+                    const img = new Image();
+                    img.onload = function() {
+                        const canvas = document.createElement('canvas');
+                        const ctx = canvas.getContext('2d');
+                        
+                        let width = img.width;
+                        let height = img.height;
+                        
+                        if (width > MAX_IMAGE_DIMENSION || height > MAX_IMAGE_DIMENSION) {
+                            if (width > height) {
+                                height = Math.round(height * MAX_IMAGE_DIMENSION / width);
+                                width = MAX_IMAGE_DIMENSION;
+                            } else {
+                                width = Math.round(width * MAX_IMAGE_DIMENSION / height);
+                                height = MAX_IMAGE_DIMENSION;
+                            }
+                        }
+                        
+                        canvas.width = width;
+                        canvas.height = height;
+                        
+                        ctx.drawImage(img, 0, 0, width, height);
+                        
+                        const optimizedDataUrl = canvas.toDataURL('image/jpeg', 0.8);
+                        
+                        images.push({
+                            name: file.name,
+                            data: optimizedDataUrl,
+                            width: width,
+                            height: height
+                        });
+                        
+                        filesProcessed++;
+                        if (filesProcessed === validFiles.length) {
+                            resolve(images);
+                        }
+                    };
+                    
+                    img.onerror = function() {
+                        console.error('Ошибка загрузки изображения');
+                        filesProcessed++;
+                        if (filesProcessed === validFiles.length) {
+                            resolve(images);
+                        }
+                    };
+                    
+                    img.src = e.target.result;
+                };
+                
+                reader.onerror = function() {
+                    console.error('Ошибка чтения файла');
+                    filesProcessed++;
+                    if (filesProcessed === validFiles.length) {
+                        resolve(images);
+                    }
+                };
+                
+                reader.readAsDataURL(file);
+            }
+        });
+    }
+
+    // Функция для вставки текста в текущую позицию курсора
+    function insertAtCursor(textarea, text) {
+        const start = textarea.selectionStart;
+        const end = textarea.selectionEnd;
+        const before = textarea.value.substring(0, start);
+        const after = textarea.value.substring(end, textarea.value.length);
+        
+        textarea.value = before + text + after;
+        textarea.selectionStart = start + text.length;
+        textarea.selectionEnd = start + text.length;
+        
+        const event = new Event('input', { bubbles: true });
+        textarea.dispatchEvent(event);
+    }
+
+    // Функция обновления предпросмотра LaTeX
+    function updateLatexPreview() {
+            try {
+                const content = document.getElementById('problem-content').value;
+                const preview = document.getElementById('latex-preview');
+                
+                if (!preview) {
+                    console.log('Элемент предпросмотра KaTeX не найден');
+                    return;
+                }
+                
+                const inlineRegex = /\$([^$]+)\$/g;
+                const displayRegex = /\$\$([^$]+)\$\$/g;
+                
+                let previewContent = '';
+                
+                if (content.match(inlineRegex) || content.match(displayRegex)) {
+                    previewContent = content
+                        .replace(/</g, '&lt;')
+                        .replace(/>/g, '&gt;')
+                        .replace(/\n/g, '<br>');
+                    
+                    previewContent = previewContent
+                        .replace(/\$([^$]+)\$/g, '<span class="math">\\($1\\)</span>')
+                        .replace(/\$\$([^$]+)\$\$/g, '<div class="math">\\[$1\\]</div>');
+                } else {
+                    previewContent = '<em>Введите формулу, используя символы $...$ для встроенных формул или $$...$$ для вынесенных формул</em>';
+                }
+                
+                preview.innerHTML = previewContent;
+                
+                // Рендерим формулы KaTeX в предпросмотре
+                renderMathInElement(preview, {
+                    delimiters: [
+                        {left: '$$', right: '$$', display: true},
+                        {left: '$', right: '$', display: false},
+                        {left: '\\(', right: '\\)', display: false},
+                        {left: '\\[', right: '\\]', display: true}
+                    ],
+                    throwOnError: false
+                });
+            } catch (error) {
+                console.error('KaTeX rendering error:', error);
+                preview.innerHTML = '<em>Ошибка в формуле KaTeX</em>';
+            }
+        }
+
+
+function showErrorMessage(message) {
+    const errorMessage = document.getElementById('success-message');
+    errorMessage.querySelector('span').textContent = message;
+    errorMessage.style.display = 'flex';
+    errorMessage.style.backgroundColor = '#f8d7da';
+    errorMessage.style.color = '#721c24';
+    
+    setTimeout(() => {
+        errorMessage.style.display = 'none';
+        errorMessage.style.backgroundColor = '#d4edda';
+        errorMessage.style.color = '#155724';
+    }, 4000);
+}
+
+  
+    // Функция проверки сложности пароля
+    function validatePassword(password) {
+        // Более гибкая проверка пароля
+        const passwordRegex = /^[A-Za-z0-9.]{8,}$/;
+        return passwordRegex.test(password);
+    }
+
+    // Функции для индикатора загрузки
+    function showLoading() {
+        document.getElementById('loading-overlay').style.display = 'flex';
+    }
+
+    function hideLoading() {
+        document.getElementById('loading-overlay').style.display = 'none';
+    }
+
+    // Настройка счетчиков символов
+    function setupCharacterCounters() {
+            // Обработчик для имени при регистрации
+            document.getElementById('register-name').addEventListener('input', function() {
+                const count = this.value.length;
+                const countElement = document.getElementById('register-name-chars');
+                countElement.textContent = count;
+                
+                if (count > 40) {
+                    countElement.classList.add('error');
+                } else {
+                    countElement.classList.remove('error');
+                }
+            });
+            
+            // Обработчик для названия задачи
+            document.getElementById('problem-title').addEventListener('input', function() {
+                const count = this.value.length;
+                let validationElement = document.getElementById('problem-title-validation');
+                
+                if (!validationElement) {
+                    validationElement = document.createElement('div');
+                    validationElement.id = 'problem-title-validation';
+                    validationElement.className = 'character-count';
+                    this.parentNode.appendChild(validationElement);
+                }
+                
+                validationElement.textContent = `${count}/200 символов`;
+                
+                if (count < 5 || count > 200) {
+                    validationElement.classList.add('error');
+                } else {
+                    validationElement.classList.remove('error');
+                }
+            });
+            
+            // Обработчик для условия задачи
+document.getElementById('problem-content').addEventListener('input', function() {
+    const count = this.value.length;
+    const validationElement = document.getElementById('problem-content-validation');
+    
+    validationElement.innerHTML = `<span>${count}</span>/2000 символов`;
+    
+    if (count < 10 || count > 2000) {
+        validationElement.classList.add('error');
+    } else {
+        validationElement.classList.remove('error');
+    }
+});
+            
+            // Обработчик для решения
+            document.getElementById('solution-content').addEventListener('input', function() {
+                const count = this.value.length;
+                let validationElement = document.getElementById('solution-content-validation');
+                
+                if (!validationElement) {
+                    validationElement = document.createElement('div');
+                    validationElement.id = 'solution-content-validation';
+                    validationElement.className = 'character-count';
+                    this.parentNode.appendChild(validationElement);
+                }
+                
+                validationElement.textContent = `${count}/3000 символов`;
+                
+                if (count < 10 || count > 3000) {
+                    validationElement.classList.add('error');
+                } else {
+                    validationElement.classList.remove('error');
+                }
+            });
+            
+            // Обработчик для комментария
+            document.getElementById('comment-content').addEventListener('input', function() {
+                const count = this.value.length;
+                let validationElement = document.getElementById('comment-content-validation');
+                
+                if (!validationElement) {
+                    validationElement = document.createElement('div');
+                    validationElement.id = 'comment-content-validation';
+                    validationElement.className = 'character-count';
+                    this.parentNode.appendChild(validationElement);
+                }
+                
+                validationElement.textContent = `${count}/3000 символов`;
+                
+                if (count < 10 || count > 3000) {
+                    validationElement.classList.add('error');
+                } else {
+                    validationElement.classList.remove('error');
+                }
+            });
+            
+            // Обработчик для тегов
+            document.getElementById('problem-tags').addEventListener('input', function() {
+                const tags = this.value.split(',').map(tag => tag.trim()).filter(tag => tag !== '');
+                let validationElement = document.getElementById('problem-tags-validation');
+                
+                if (!validationElement) {
+                    validationElement = document.createElement('div');
+                    validationElement.id = 'problem-tags-validation';
+                    validationElement.className = 'character-count';
+                    this.parentNode.appendChild(validationElement);
+                }
+                
+                let error = '';
+                
+                if (tags.length > 10) {
+                    error = 'Можно указать не более 10 тегов. ';
+                }
+                
+                for (const tag of tags) {
+                    if (tag.length > 30) {
+                        error += 'Каждый тег должен быть не длиннее 30 символов. ';
+                        break;
+                    }
+                }
+                
+                validationElement.textContent = error || `${tags.length}/10 тегов`;
+                
+                if (error) {
+                    validationElement.classList.add('error');
+                } else {
+                    validationElement.classList.remove('error');
+                }
+            });
+        }
+</script>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <header>
+        <div class="theme-label">
+    <label class="switch">
+        <input id="theme-toggle" type="checkbox" />
+        <div class="slider round">
+            <div class="sun-moon">
+                <svg id="moon-dot-1" class="moon-dot" viewBox="0 0 100 100">
+                    <circle cx="50" cy="50" r="50"></circle>
+                </svg>
+                <svg id="moon-dot-2" class="moon-dot" viewBox="0 0 100 100">
+                    <circle cx="50" cy="50" r="50"></circle>
+                </svg>
+                <svg id="moon-dot-3" class="moon-dot" viewBox="0 0 100 100">
+                    <circle cx="50" cy="50" r="50"></circle>
+                </svg>
+                <svg id="light-ray-1" class="light-ray" viewBox="0 0 100 100">
+                    <circle cx="50" cy="50" r="50"></circle>
+                </svg>
+                <svg id="light-ray-2" class="light-ray" viewBox="0 0 100 100">
+                    <circle cx="50" cy="50" r="50"></circle>
+                </svg>
+                <svg id="light-ray-3" class="light-ray" viewBox="0 0 100 100">
+                    <circle cx="50" cy="50" r="50"></circle>
+                </svg>
+
+                <svg id="cloud-1" class="cloud-dark" viewBox="0 0 100 100">
+                    <circle cx="50" cy="50" r="50"></circle>
+                </svg>
+                <svg id="cloud-2" class="cloud-dark" viewBox="0 0 100 100">
+                    <circle cx="50" cy="50" r="50"></circle>
+                </svg>
+                <svg id="cloud-3" class="cloud-dark" viewBox="0 0 100 100">
+                    <circle cx="50" cy="50" r="50"></circle>
+                </svg>
+                <svg id="cloud-4" class="cloud-light" viewBox="0 0 100 100">
+                    <circle cx="50" cy="50" r="50"></circle>
+                </svg>
+                <svg id="cloud-5" class="cloud-light" viewBox="0 0 100 100">
+                    <circle cx="50" cy="50" r="50"></circle>
+                </svg>
+                <svg id="cloud-6" class="cloud-light" viewBox="0 0 100 100">
+                    <circle cx="50" cy="50" r="50"></circle>
+                </svg>
+            </div>
+            <div class="stars">
+                <svg id="star-1" class="star" viewBox="0 0 20 20">
+                    <path
+                        d="M 0 10 C 10 10,10 10 ,0 10 C 10 10 , 10 10 , 10 20 C 10 10 , 10 10 , 20 10 C 10 10 , 10 10 , 10 0 C 10 10,10 10 ,0 10 Z"
+                    ></path>
+                </svg>
+                <svg id="star-2" class="star" viewBox="0 0 20 20">
+                    <path
+                        d="M 0 10 C 10 10,10 10 ,0 10 C 10 10 , 10 10 , 10 20 C 10 10 , 10 10 , 20 10 C 10 10 , 10 10 , 10 0 C 10 10,10 10 ,0 10 Z"
+                    ></path>
+                </svg>
+                <svg id="star-3" class="star" viewBox="0 0 20 20">
+                    <path
+                        d="M 0 10 C 10 10,10 10 ,0 10 C 10 10 , 10 10 , 10 20 C 10 10 , 10 10 , 20 10 C 10 10 , 10 10 , 10 0 C 10 10,10 10 ,0 10 Z"
+                    ></path>
+                </svg>
+                <svg id="star-4" class="star" viewBox="0 0 20 20">
+                    <path
+                        d="M 0 10 C 10 10,10 10 ,0 10 C 10 10 , 10 10 , 10 20 C 10 10 , 10 10 , 20 10 C 10 10 , 10 10 , 10 0 C 10 10,10 10 ,0 10 Z"
+                    ></path>
+                </svg>
+            </div>
+        </div>
+    </label>
+</div>
+        <div class="container">
+            <h1>Форум задач</h1>
+            <p>Раздел для публикации, решения и обсуждения математических задач. Присутствует поддержка шрифта KaTeX для математических выражений</p>
+            
+            <div class="user-section">
+                
+                <div class="user-info" id="user-info" style="display: none;">
+                    <div class="user-avatar" id="user-avatar"></div>
+                    <span id="user-name"></span>
+                </div>
+                <button class="btn" id="login-btn"><i class="fas fa-user"></i> Войти</button>
+                <button class="btn btn-secondary" id="logout-btn" style="display: none;"><i class="fas fa-sign-out-alt"></i> Выйти</button>
+            </div>
+        </div>
+    </header>
+    
+    <!-- Модальное окно авторизации -->
+    <div class="auth-modal" id="auth-modal">
+        <div class="auth-content">
+            <div class="auth-tabs">
+                <div class="auth-tab active" data-tab="login">Вход</div>
+                <div class="auth-tab" data-tab="register">Регистрация</div>
+            </div>
+            
+            <div class="auth-form active" id="login-form">
+                <div class="form-group">
+                    <label for="login-email">Email:</label>
+                    <input type="email" id="login-email" placeholder="Введите ваш email">
+                </div>
+                <div class="form-group">
+                    <label for="login-password">Пароль:</label>
+                    <input type="password" id="login-password" placeholder="Введите ваш пароль">
+                </div>
+                <div id="login-error" class="error-message"></div>
+                <button class="btn" id="submit-login"><i class="fas fa-sign-in-alt"></i> Войти</button>
+                
+                <div class="auth-switch">
+                    Нет аккаунта? <a id="switch-to-register">Зарегистрироваться</a>
+                </div>
+            </div>
+            
+            <div class="auth-form" id="register-form">
+                <div class="form-group">
+                    <label for="register-name">Имя:</label>
+                    <input type="text" id="register-name" placeholder="Введите ваше имя (максимум 40 символов)" maxlength="40">
+                    <div class="character-count">
+                        <span id="register-name-chars">0</span>/40 символов
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label for="register-email">Email:</label>
+                    <input type="email" id="register-email" placeholder="Введите ваш email">
+                </div>
+                <div class="form-group">
+                    <label for="register-password">Пароль:</label>
+                    <input type="password" id="register-password" placeholder="Придумайте пароль">
+                <div class="password-requirements">
+                        Пароль может содержать только:
+                        <ul>
+                            <li>Минимум 8 символов</li>
+                            <li>Только английские буквы (заглавные или строчные)</li>
+                            <li>Цифры</li>
+                            <li>Точку (.)</li>
+                        </ul>
+                    </div>
+                    <div class="password-error" id="register-password-error"></div>
+                </div>
+                <div class="form-group">
+                    <label for="register-password-confirm">Подтверждение пароля:</label>
+                    <input type="password" id="register-password-confirm" placeholder="Повторите пароль">
+                </div>
+                <div id="register-error" class="error-message"></div>
+                <button class="btn" id="submit-register"><i class="fas fa-user-plus"></i> Зарегистрироваться</button>
+                
+                <div class="auth-switch">
+                    Уже есть аккаунт? <a id="switch-to-login">Войти</a>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Модальное окно для просмотра изображений -->
+    <div class="modal" id="image-modal">
+        <span class="close-modal" id="close-modal">&times;</span>
+        <img class="modal-content" id="modal-image">
+    </div>
+    
+    <!-- Модальное окно FAQ -->
+    <div class="faq-modal" id="faq-modal">
+        <div class="faq-content">
+            <div class="faq-header">
+                <h2><i class="fas fa-question-circle"></i> Ввод математических выражений с помощью KaTeX</h2>
+                <button class="close-faq" id="close-faq">&times;</button>
+            </div>
+            
+            <div class="faq-item">
+                <div class="faq-question">
+                    <span>Что это?</span>
+                    <i class="fas fa-chevron-down"></i>
+                </div>
+                <div class="faq-answer">
+                    Код KaTeX позволяет вводить математические выражения в том виде, в котором они обычно представлены на бумаге. Например: вместо x^2 KaTeX позволяет выводить $x^2$, ³√(x) —> $\sqrt[3]{x}$, a/b —> $\frac{a}{b}$. Вот сложный пример:
+∫ (–∞ → +∞) |3x-3x²|+3x-3x² dx —>
+
+$$\int_{-\infty}^{+\infty} \left| 3x - 3x^2 \right| + 3x - 3x^2  \, dx$$
+                </div>
+            </div>
+            
+            <div class="faq-item">
+                <div class="faq-question">
+                    <span>Зачем это?</span>
+                    <i class="fas fa-chevron-down"></i>
+                </div>
+                <div class="faq-answer">
+                    Представление математических выражений при помощи KaTeX помогает лучше понять условие задачи.$$ \sqrt[]{\frac{x^{sinz} - 1}{\frac{a + 2}{b} + \frac{c}{d - 2}}}$$ ведь легче воспринимается, чем √((x^(sinz) - 1)/((a + 2)/b + c/(d - 2))).
+$\int_{-\infty}^{+\infty} e^{-x^2}  \, dx = \sqrt{π}$ вместо ∫ (-∞ → +∞) e^(-x^2) dx = √π также хороший пример. Суть данного сайта — публикация/решение/комментирование задач, очевидно не всегда самых простых. Сложные формулы легче воспринимаются в том виде, в котором они были бы записаны человеком от руки. KaTeX поможет авторам задач представить свои творения в лучшем виде.
+                </div>
+            </div>
+            
+            <div class="faq-item">
+                <div class="faq-question">
+                    <span>Как оформить выражение на KaTeX?</span>
+                    <i class="fas fa-chevron-down"></i>
+                </div>
+                <div class="faq-answer">
+                    Чтобы использовать KaTeX при написании выражений, используются знаки "Доллара" — $\$$ в начале и в конце выражения, если мы хотим подставить его как часть текста; или 2 "Доллара" $\$$ в начале и в конце выражения, если мы хотим его выделить отдельным абзацем из остального текста, "обособить". Например: $\$$ a + \frac{a}{b} $\$$ —> $a + \frac{a}{b}$. А $\$\$$ \alpha + \gamma $\$\$$ —> $$\alpha + \gamma$$ (отдельный абзац).
+                </div>
+            </div>
+            
+            <div class="faq-item">
+                <div class="faq-question">
+                    <span>Запись логических операций</span>
+                    <i class="fas fa-chevron-down"></i>
+                </div>
+                <div class="faq-answer">
+                    Логические операции (+–÷×√∫ и тп) оформляются кодом KaTeX (заключенным в знаках "Доллара") с помощью "\", далее (всë без пробелов) кодировка функции (sqrt, int, frac и тп) и скобки, какие используются для отображения данной логической операции ( [ ], { } и тп). В скобки вводятся входные данные для логической операции. Например: дробь a/b  на языке KaTeX записывается так: \frac{a}{b}, поставьте перед и после этой записи знаки "Доллара" и выражение примет вид, в котором обычно записываются дроби: $$\frac{a}{b}$$ (До и после записи ставятся знаки "Доллара")
+                </div>
+            </div>
+            
+            <div class="faq-item">
+                <div class="faq-question">
+                    <span>Дроби</span>
+                    <i class="fas fa-chevron-down"></i>
+                </div>
+                <div class="faq-answer">
+                    Как вы уже узнали из предыдущего пункта, дробь записывается в виде  \frac{}{}, где в первые фигурные скобки пишется числитель, а во вторые знаменатель. Вы можете использовать дроби как числитель и/или знаменатель, например $\$$ \frac{\frac{a}{b}}{\frac{c}{d}} $\$$ выведет $\frac{\frac{a}{b}}{\frac{c}{d}}$, где $\frac{a}{b}$ — числитель, а $\frac{c}{d}$ — знаменатель.
+                </div>
+            </div>
+            
+            <div class="faq-item">
+                <div class="faq-question">
+                    <span>Степени и корни</span>
+                    <i class="fas fa-chevron-down"></i>
+                </div>
+                <div class="faq-answer">
+                    Степень записывается так ^{ }, где в { } записывается показатель степени, например $\$$ a^{\frac{b}{c}} $\$$ —> $a^{\frac{b}{c}}$. Корень записывается так \sqrt[ ]{ }, где в [ ] пишется степень корня, а в { } пишется подкоренное выражение, например $\$$ \sqrt[3]{x^2 - 1} $\$$ —> $\sqrt[3]{x^2 - 1}$
+                </div>
+            </div>
+            
+            <div class="faq-item">
+                <div class="faq-question">
+                    <span>Индексы и логарифмы </span>
+                    <i class="fas fa-chevron-down"></i>
+                </div>
+                <div class="faq-answer">
+                    Индекс обозначается так _{ }, где в { } пишется значение индекса, например $\$$ a_{b} $\$$ —> $a_{b}$. Говоря о логарифмах, log, lg, ln пишутся без кодировки, а их основания можно записать как индекс, например $\$$ log_{x + 1} 4 $\$$ —> $log_{x + 1} 4$
+                </div>
+            </div>
+            
+            <div class="faq-item">
+                <div class="faq-question">
+                    <span>О модулях</span>
+                    <i class="fas fa-chevron-down"></i>
+                </div>
+                <div class="faq-answer">
+                    В клавиатуре нетрудно найти символ "|", однако к дроби, и вообще ко всему любому составному выражению, применить функцию модуля этим символом не получится. Для обозначения модуля используются \left| (открывает модуль) и \right| (закрывает модуль), например $\$$ \left| \frac{a^3}{b + c} + \sqrt[3]{\frac{x}{x² + 1}} \right| $\$$  —>  $\left| \frac{a^3}{b + c} + \sqrt[3]{\frac{x}{x² + 1}} \right|$
+                </div>
+            </div>
+            
+            <div class="faq-item">
+                <div class="faq-question">
+                    <span>Интегралы</span>
+                    <i class="fas fa-chevron-down"></i>
+                </div>
+                <div class="faq-answer">
+                    Запись интеграла сложна, но мы распишем её по частям. Записывается так $\$$ \int_{a}^{b} f(x) \, dx $\$$ ($\int_{a}^{b} f(x) \, dx$), где вместо a подставляется нижний предел, вместо b — верхний, вместо f(x) — интегрируемая функция. Для записи символа бесконечности используется \infty —> $\infty$. Пример: $\$$ \int_{-\infty}^{+\infty} \left| 3x - 3x^2 \right| + 3x - 3x^2  \, dx $\$$ —> $$\int_{-\infty}^{+\infty} \left| 3x - 3x^2 \right| + 3x - 3x^2  \, dx$$
+                </div>
+            </div>
+            
+            <div class="faq-item">
+                <div class="faq-question">
+                    <span>Остальное</span>
+                    <i class="fas fa-chevron-down"></i>
+                </div>
+                <div class="faq-answer">
+                    Больше о KaTeX вы можете узнать <a href="https://katex.org/docs/supported.html">здесь</a>
+                </div>
+            </div>
+            
+        </div>
+    </div>
+    
+    <div class="container">
+        <nav>
+            <ul>
+                <li><a href="#" class="active" id="nav-problems"><i class="fas fa-list"></i> Все задачи</a></li>
+                <li><a href="#" id="nav-add"><i class="fas fa-plus-circle"></i> Добавить задачу</a></li>
+                <li><a href="#" id="nav-profile"><i class="fas fa-user-circle"></i> Профиль</a></li>
+                <li><a href="#" id="nav-about"><i class="fas fa-info-circle"></i>О KaTeX</a></li>
+                <li><a href="home.html"><i class="fas fa-home"></i> Главная</a></li>
+            </ul>
+        </nav>
+        
+        <!-- Добавляем раздел профиля -->
+        <div class="card" id="profile-section" style="display: none;">
+            <h2 class="section-title"><i class="fas fa-user-circle"></i> Ваш профиль</h2>
+            
+            <div id="profile-login-required" class="login-required" style="display: none;">
+                <p>Для просмотра профиля необходимо войти в аккаунт</p>
+                <button class="btn" id="login-for-profile"><i class="fas fa-sign-in-alt"></i> Войти</button>
+            </div>
+            
+            <div id="profile-content" style="display: none;">
+                <div class="profile-header">
+                    <div class="profile-avatar" id="profile-avatar"></div>
+                    <div class="profile-info">
+                        <h1 class="profile-name" id="profile-user-name"></h1>
+                        <div class="profile-description" id="profile-description"></div>
+                        <p>Участник с <span id="profile-registration-date"></span></p>
+                        
+                        <div class="profile-stats">
+                           
+                            <div class="stat-item">
+                                <div class="stat-number" id="stat-likes-problems">0</div>
+                                <div class="stat-label">Лайков за задачи</div>
+                            </div>
+                            <div class="stat-item">
+                                <div class="stat-number" id="stat-likes-solutions">0</div>
+                                <div class="stat-label">Лайков за решения</div>
+                            </div>
+                            <div class="stat-item">
+                                <div class="stat-number" id="stat-likes-comments">0</div>
+                                <div class="stat-label">Лайков за комментарии</div>
+                            </div>     
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="profile-content">
+                    <div class="profile-section">
+                        <h3 class="profile-section-title">Мои задачи</h3>
+                        <div class="profile-list" id="profile-problems-list">
+                            <!-- Список задач пользователя -->
+                        </div>
+                    </div>
+                    
+                    <div class="profile-section">
+                        <h3 class="profile-section-title">Мои решения</h3>
+                        <div class="profile-list" id="profile-solutions-list">
+                            <!-- Список решений пользователя -->
+                        </div>
+                    </div>
+                    
+                    <div class="profile-section">
+                        <h3 class="profile-section-title">Мои комментарии</h3>
+                        <div class="profile-list" id="profile-comments-list">
+                            <!-- Список комментариев пользователя -->
+                        </div>
+                    </div>
+                    
+                    <div class="profile-section">
+                        <h3 class="profile-section-title">Избранные задачи (50 макс.)</h3>
+                        <div class="profile-list" id="profile-favorites-list">
+                            <!-- Список избранных задач пользователя -->
+                        </div>
+                    </div>
+                    
+                    <div class="profile-section">
+                        <h3 class="profile-section-title">Лучшие решения</h3>
+                        <div class="profile-list" id="profile-best-solutions-list">
+                            <!-- Список решений, отмеченных как лучшие -->
+                        </div>
+                    </div>
+                    
+                    <div class="profile-section">
+                        <h3 class="profile-section-title">Активность</h3>
+                        <div id="profile-activity">
+                            <!-- График или статистика активности --> <div class="stat-item">
+                                <div class="stat-number" id="stat-problems">0</div>
+                                <div class="stat-label">Задач создано</div>
+                            </div>
+                            <div class="stat-item">
+                                <div class="stat-number" id="stat-solutions">0</div>
+                                <div class="stat-label">Решений добавлено</div>
+                            </div>
+                            <div class="stat-item">
+                                <div class="stat-number" id="stat-comments">0</div>
+                                <div class="stat-label">Комментариев добавлено</div>
+                            </div>
+                            <div class="stat-item">
+                                <div class="stat-number" id="stat-favorites">0</div>
+                                <div class="stat-label">В избранных из 50</div>
+                            </div>
+                            <div class="stat-item">
+                                <div class="stat-number" id="stat-best-solutions">0</div>
+                                <div class="stat-label">Лучших решений получено</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- Добавляем кнопку удаления аккаунта -->
+                <div class="account-management">
+                    <h3 class="profile-section-title">Управление аккаунтом</h3>
+                    <div class="form-group">
+                        <label for="account-description">Описание профиля (максимум 100 символов):</label>
+                        <textarea id="account-description" maxlength="100" placeholder="Расскажите о себе..."></textarea>
+                        <div class="character-count">
+                            <span id="description-chars">0</span>/100 символов
+                        </div>
+                    </div>
+                    <button class="btn" id="save-description-btn">
+                        <i class="fas fa-save"></i> Сохранить описание
+                    </button>
+                    
+                    <!-- Добавляем форму изменения пароля -->
+                    <div class="form-group" style="margin-top: 20px;">
+                        <h4>Изменение пароля</h4>
+                        <label for="old-password">Старый пароль:</label>
+                        <input type="password" id="old-password" placeholder="Введите старый пароль">
+                        
+                        <label for="new-password">Новый пароль:</label>
+                        <input type="password" id="new-password" placeholder="Введите новый пароль">
+                        <div class="password-requirements">
+                            Пароль может содержать только:
+                            <ul>
+                                <li>Минимум 8 символов</li>
+                                <li>Только английские буквы (заглавные или строчные)</li>
+                                <li>Цифры</li>
+                                <li>Точку (.)</li>
+                            </ul>
+                        </div>
+                        <div class="password-error" id="new-password-error"></div>
+                        
+                        <label for="confirm-new-password">Подтверждение нового пароля:</label>
+                        <input type="password" id="confirm-new-password" placeholder="Повторите новый пароль">
+                        <div class="password-error" id="confirm-password-error"></div>
+                    </div>
+                    <button class="btn" id="change-password-btn">
+                        <i class="fas fa-key"></i> Изменить пароль
+                    </button>
+                    
+                    <button class="btn btn-secondary" id="delete-account-btn">
+                        <i class="fas fa-trash"></i> Удалить аккаунт
+                    </button>
+                </div>
+            </div>
+        </div>
+        
+        <div id="success-message" class="success-message" style="display: none;">
+            <i class="fas fa-check-circle"></i>
+            <span>Ваша задача успешно добавлена!</span>
+        </div>
+        
+        <div class="counter">
+            <div class="counter-item">
+                <div class="counter-number" id="total-problems">0</div>
+                <div class="counter-text">Задач</div>
+            </div>
+            <div class="counter-item">
+                <div class="counter-number" id="total-solutions">0</div>
+                <div class="counter-text">Решений</div>
+            </div>
+            <div class="counter-item">
+                <div class="counter-number" id="total-comments">0</div>
+                <div class="counter-text">Комментариев</div>
+            </div>
+        </div>
+        
+        <div class="main-content">
+            <div id="problems-section">
+                <div class="card">
+                    <div class="search-box">
+                        <input type="text" id="search-input" placeholder="Поиск по задачам...">
+                        <button class="btn" id="search-btn"><i class="fas fa-search"></i></button>
+                    </div>
+                    
+                    <!-- Добавлены кнопки сортировки -->
+                    <div class="sort-options">
+                        <button class="sort-btn active" id="sort-by-date">
+                            <i class="fas fa-calendar-alt"></i> Сначала новые
+                        </button>
+                        <button class="sort-btn" id="sort-by-popularity">
+                            <i class="fas fa-fire"></i> По популярности
+                        </button>
+                    </div>
+                </div>
+                
+                <!-- Пагинация перед списком задач -->
+                <div class="card pagination-top" id="pagination-top-container">
+                    <!-- Верхняя пагинация будет добавлена сюда через JavaScript -->
+                </div>
+                
+                <div class="card problems-list" id="problems-list">
+                    <h2 class="section-title"><i class="fas fa-tasks"></i>Задачи</h2>
+                    <!-- Задачи будут загружены здесь через JavaScript -->
+                </div>
+                
+                <!-- Контейнер для пагинации -->
+                <div class="card" id="pagination-container">
+                    <!-- Пагинация будет добавлена сюда через JavaScript -->
+                </div>
+                
+                <div class="card" id="problem-detail" style="display: none;">
+                    <button class="btn" id="back-to-problems"><i class="fas fa-arrow-left"></i> Назад к списку задач</button>
+                    
+                    <div class="problem">
+                        <div style="display: flex; justify-content: space-between; align-items: flex-start;">
+                            <h2 id="detail-title"></h2>
+                            <button class="favorite-btn" id="toggle-favorite" title="Добавить в избранное">
+                                <i class="far fa-star"></i>
+                            </button>
+                        </div>
+                        <div class="problem-meta">
+                            <span id="detail-author"></span>
+                            <span id="detail-date"></span>
+                        </div>
+                        <div id="detail-tags" style="margin: 15px 0;"></div>
+                        <p id="detail-content"></p>
+                        <div id="detail-images" class="attached-images"></div>
+                        <div class="reactions" id="problem-reactions">
+                            <!-- Кнопки реакций для задачи -->
+                        </div>
+                        <div id="problem-actions" class="problem-actions" style="display: none;">
+                            <button class="btn btn-secondary btn-sm" id="delete-problem"><i class="fas fa-trash"></i> Удалить задачу</button>
+                        </div>
+                    </div>
+                    
+                    <h3 class="section-title"><i class="fas fa-check-circle"></i> Решения:</h3>
+                    <div id="solutions-list">
+                        <!-- Решения будут загружены здесь -->
+                    </div>
+                    
+                    <div style="margin-top: 30px;">
+                        <h3 class="section-title"><i class="fas fa-edit"></i> Добавить решение:</h3>
+                        <div id="solution-form">
+                            <div class="form-group">
+                                <label for="solution-content">Ваше решение:</label>
+                                <textarea id="solution-content" placeholder="Опишите ваше решение"></textarea>
+                            </div>
+                            <div class="image-upload">
+                                <label class="image-upload-label">Прикрепить фото (PNG/JPEG):</label>
+                                <div class="file-size-info">
+    Максимальный размер файла: 2 МБ. Рекомендуемый размер: до 500 КБ.
+</div>
+                                <div class="file-input-wrapper">
+                                    <div class="file-input-button">
+                                        <i class="fas fa-plus"></i> Прикрепить фото
+                                    </div>
+                                    <input type="file" id="solution-images" multiple accept=".jpg, .jpeg, .png">
+                                </div>
+                                <span class="file-name" id="solution-file-names"></span>
+                                <div class="image-preview-container" id="solution-image-previews"></div>
+                            </div>
+                            <button class="btn" id="submit-solution"><i class="fas fa-paper-plane"></i> Отправить решение</button>
+                        </div>
+                        <div id="solution-login-required" class="login-required" style="display: none;">
+                            <p>Чтобы добавить решение, необходимо войти в аккаунт</p>
+                            <button class="btn" id="login-for-solution"><i class="fas fa-sign-in-alt"></i> Войти</button>
+                        </div>
+                    </div>
+                    
+                    <h3 class="section-title" style="margin-top: 30px;"><i class="fas fa-comments"></i> Комментарии:</h3>
+                    <div id="comments-list">
+                        <!-- Комментарии будут загружены здесь -->
+                    </div>
+                    
+                    <div style="margin-top: 30px;">
+                        <h3 class="section-title"><i class="fas fa-comment"></i> Добавить комментарий:</h3>
+                        <div id="comment-form">
+                            <div class="form-group">
+                                <label for="comment-content">Ваш комментарий:</label>
+                                <textarea id="comment-content" placeholder="Введите ваш комментарий"></textarea>
+                            </div>
+                            <div class="image-upload">
+                                <label class="image-upload-label">Прикрепить фото (PNG/JPEG):</label>
+                                <div class="file-size-info">
+    Максимальный размер файла: 2 МБ. Рекомендуемый размер: до 500 КБ.
+</div>
+                                <div class="file-input-wrapper">
+                                    <div class="file-input-button">
+                                        <i class="fas fa-plus"></i> Прикрепить фото
+                                    </div>
+                                    <input type="file" id="comment-images" multiple accept=".jpg, .jpeg, .png">
+                                </div>
+                                <span class="file-name" id="comment-file-names"></span>
+                                <div class="image-preview-container" id="comment-image-previews"></div>
+                            </div>
+                            <button class="btn" id="submit-comment"><i class="fas fa-paper-plane"></i> Отправить комментарий</button>
+                        </div>
+                        <div id="comment-login-required" class="login-required" style="display: none;">
+                            <p>Чтобы добавить комментарий, необходимо войти в аккаунт</p>
+                            <button class="btn" id="login-for-comment"><i class="fas fa-sign-in-alt"></i> Войти</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <div>
+                <div class="card" id="add-problem-section">
+                    <h2 class="section-title"><i class="fas fa-plus-circle"></i> Добавить новую задачу</h2>
+                    <div id="problem-form">
+                        <div class="form-group">
+                            <label for="problem-title">Название задачи:</label>
+                            <input type="text" id="problem-title" placeholder="Введите название задачи">
+                        </div>
+                        <div class="form-group">
+                            <label for="problem-content">Условие задачи:</label>
+                            
+                    <!-- Панель инструментов LaTeX -->
+                    <div class="latex-toolbar">
+                        <button type="button" class="latex-btn" data-insert="\frac{ }{ }"><i class="fas fa-divide"></i> Дробь</button>
+                        <button type="button" class="latex-btn" data-insert="\sqrt[ ]{ }"><i class="fas fa-square-root-alt"></i> Корень</button>
+                        <button type="button" class="latex-btn" data-insert="^{ }"><i class="fas fa-superscript"></i> Степень</button>
+                        <button type="button" class="latex-btn" data-insert="_{ }"><i class="fas fa-subscript"></i> Индекс</button>
+                        <button type="button" class="latex-btn" data-insert="\int_{ }^{ }"><i class="fas fa-integral"></i>∫ Интеграл</button>
+                        <button type="button" class="latex-btn" data-insert="\sum_{ }^{ }"><i class="fas fa-sigma"></i>Σ Сумма</button>
+                        <button type="button" class="latex-btn" data-insert="\lim\limits_{n\to\infty}"><i class="fas fa-infinity"></i> Предел</button>
+                        <button type="button" class="latex-btn" data-insert="\left( \right)"><i class="fas fa-parentheses"></i> (Скобки)</button>
+                        <button type="button" class="latex-btn" data-insert="\left| \right|"><i class="fas fa-absolute-value"></i> |Модуль|</button>
+                        <button type="button" class="latex-btn" data-insert="\pi"><i class="fas fa-pi"></i> π</button>
+                        <button type="button" class="latex-btn" data-insert="\infty"><i class="fas fa-infinity"></i></button>
+                        <button type="button" class="latex-btn" data-insert="\to"><i class="fas fa-to"></i>$\to$</button>
+                    </div>
+                            
+                            <textarea id="problem-content" placeholder="Опишите условие задачи (поддержка кода KaTeX)"></textarea>
+                            
+                            <div class="character-count" id="problem-content-validation">
+        <span>0</span>/2000 символов
+    </div>
+                            <!-- Блок предпросмотра LaTeX -->
+    <div class="latex-preview">
+        <div class="latex-preview-title">Предпросмотр формул:</div>
+        <div class="latex-preview-content" id="latex-preview"></div>
+        <div class="latex-help">Используйте синтаксис KaTeX для формул. Формулы в $\$$...$\$$ будут встроены в текст, а в $\$\$$...$\$\$$ — вынесены отдельно.</div>
+    </div>
+                        
+                        </div>
+                        <div class="image-upload">
+                            <label class="image-upload-label">Прикрепить фото (PNG/JPEG):</label>
+                            <div class="file-size-info">
+    Максимальный размер файла: 2 МБ. Рекомендуемый размер: до 500 КБ.
+</div>
+                            <div class="file-input-wrapper">
+                                <div class="file-input-button">
+                                    <i class="fas fa-plus"></i> Прикрепить фото
+                                </div>
+                                <input type="file" id="problem-images" multiple accept=".jpg, .jpeg, .png">
+                            </div>
+                            <span class="file-name" id="problem-file-names"></span>
+                            <div class="image-preview-container" id="problem-image-previews"></div>
+                        </div>
+                        <div class="form-group">
+                            <label for="problem-tags">Теги (через запятую):</label>
+                            <input type="text" id="problem-tags" placeholder="Например: алгебра, геометрия, тригонометрия">
+                        </div>
+                        <div class="form-group">
+                            <label for="problem-difficulty">Сложность:</label>
+                            <select id="problem-difficulty">
+                                <option value="легкая">Легкая</option>
+                                <option value="средняя">Средняя</option>
+                                <option value="сложная">Сложная</option>
+                            </select>
+                        </div>
+                        
+                        <div class="form-group"><button class="btn" id="preview-problem" style="margin-right: 10px;">
+    <i class="fas fa-eye"></i> Предпросмотр
+</button>
+                        </div>
+                        <button class="btn" id="submit-problem"><i class="fas fa-plus"></i> Опубликовать задачу</button>
+                    </div>
+                    <div id="problem-login-required" class="login-required" style="display: none;">
+                        <p>Чтобы добавить задачу, необходимо войти в аккаунт</p>
+                        <button class="btn" id="login-for-problem"><i class="fas fa-sign-in-alt"></i> Войти</button>
+                    </div>
+                </div>
+            </div>
+            <div class="vscode-window">
+  <div class="title-bar">
+    MathProjForum — INFO
+    <div class="window-controls">
+      <div class="close"></div>
+      <div class="minimize"></div>
+      <div class="maximize"></div>
+    </div>
+  </div>
+
+  <input class="i" type="radio" name="tab" id="tab-html" checked="" />
+  <input class="i" type="radio" name="tab" id="tab-css" />
+  <input class="i" type="radio" name="tab" id="tab-js" />
+
+  <div class="tabs">
+    <label class="l" for="tab-html">ABOUT.html</label>
+    <label class="l" for="tab-css">RULES.css</label>
+    <label class="l" for="tab-js">CONTACT.js</label>
+  </div>
+
+  <div class="code-panel">
+    <div id="html-panel" class="panel">
+     <div class="comment1">&lt;-- О Сообществе --&gt;</div>
+                        Добро пожаловать в Сообщество Авторов Математических задач <span class="keyword">MathProj</span>!<br />
+                        Здесь вы можете:<br />
+                        &nbsp;&nbsp;&nbsp;&nbsp; <span class="value">• Опубликовывать/решать/комментировать/оценивать математические задачи в разделе Форум.</span><br />
+                        &nbsp;&nbsp;&nbsp;&nbsp; <span class="value">• Участвовать в соревнованиях и в математических дуэлях, решая задачи на скорость.</span><br />
+                        &nbsp;&nbsp;&nbsp;&nbsp; <span class="value">• Практиковаться составлять математические задачи.</span><br />
+                        &nbsp;&nbsp;&nbsp;&nbsp; <span class="value">• Учиться составлять математические ввражения с помощью кода KaTeX.</span><br />
+                        &nbsp;&nbsp;&nbsp;&nbsp; <span class="value">• Повышать свой уровень знаний и умений по математике.</span><br />
+                        <br />
+                        · Цель: Сообщество создано для: обмена оригинальными математическими задачами, их совместного решения, конструктивного обсуждения, обучения в уважительной атмосфере; повышения уровня знаний и умений решать и составлять математические задачи; практики по составлению математических задач на заданные темы; обучения составления математических выражений при помощи кода KaTeX.<br />
+                        · Аудитория: Мы приветствуем участников с любым уровнем подготовки — от школьников и студентов до профессиональных математиков. Главное — искренний интерес к математике.<br />
+                        · Дух сообщества: Помните, что мы здесь, чтобы учиться друг у друга. Будьте терпеливы, вежливы и помогайте другим, если видите, что можете это сделать.<br />
+                        <br />
+                        <span class="string">✮ Обменивайтесь опытом и знаниями! Соревнуйтесь в скорости решения математических задач и практикуйтесь в их составлении! ✮</span><br />
+                        <br />
+                        Чиккетти Маттео<br />
+                        Торресилья Терентьев Луис<br />
+                        10-В класс, школы 1252 им. Сервантеса<br />
+                        г. Москва<br />
+                        2025-2026©
+                    </div>
+                    
+                    <div id="css-panel" class="panel">
+                        <div class="comment1">&lt;-- Правила Сообщества --&gt;</div>
+                        1) Оригинальность:<br />
+&nbsp;&nbsp;&nbsp;&nbsp;1.1) Опубликовывать можно: задачи придуманные вами лично; задачи из малоизвестных источников, с обязательным указанием автора.<br />
+&nbsp;&nbsp;&nbsp;&nbsp;1.2) Запрещено выдавать чужие задачи за свои собственные без указания автора. Это плагиат.<br />
+&nbsp;&nbsp;&nbsp;&nbsp;1.3) Запрещено выкладывать задачи, из школьной программы (исключения составляют задачи с изменëнным/усложнëнным условием).<br /><br />
+2) Категоризация. При публикации необходимо указывать:<br />
+&nbsp;&nbsp;&nbsp;&nbsp;2.1) Раздел/разделы (алгебра; геометрия: планиметрия, стереометрия; математический анализ и т. п.).<br />
+&nbsp;&nbsp;&nbsp;&nbsp;2.2) Уровень сложности (легкий/средний/сложный).<br /><br />
+3) Оформление. При составлении задачи:<br />
+&nbsp;&nbsp;&nbsp;&nbsp;3.1) Используйте чёткие и однозначные формулировки.<br />
+&nbsp;&nbsp;&nbsp;&nbsp;3.2) Проверяйте текст на опечатки и грамматические ошибки перед публикацией задачи.<br /><br />
+4) Правила решения и комментирования задач:<br />
+&nbsp;&nbsp;&nbsp;&nbsp;4.1) Все комментарии/решения к задаче должны быть связаны с содержанием этой задачи. Избегайте флуда, оффтопа и пустых сообщений.<br />
+&nbsp;&nbsp;&nbsp;&nbsp;4.2) Запрещены оскорбления, унизительные комментарии о уровне знаний участника, троллинг.<br />
+&nbsp;&nbsp;&nbsp;&nbsp;4.3) Если ваше решение основано на идее из другого решения/комментария, обязательно укажите на это и отдайте должное автору идеи.<br /><br />
+5) Правила поведения и коммуникации:<br />
+&nbsp;&nbsp;&nbsp;&nbsp;5.1)  Запрещено проявлять ксенофобию, сексизм, буллинг, оскорбление и любое другое неуважительное поведение.<br />
+&nbsp;&nbsp;&nbsp;&nbsp;5.2) Запрещена несанкционированная реклама, размещение ссылок на коммерческие продукты или другие ресурсы без согласования с администрацией.<br /><br />
+6) Модерация:<br />
+&nbsp;&nbsp;&nbsp;&nbsp;6.1) Администрация и модераторы оставляют за собой право удалять контент, если он нарушает правила сайта.<br />
+&nbsp;&nbsp;&nbsp;&nbsp;6.2) Все действия модераторов можно обжаловать в личной переписке с администрацией, предоставив свои аргументы. Связаться с администрацией сайта можно в разделе сайта "Обратная связь".<br />
+&nbsp;&nbsp;&nbsp;&nbsp;6.3) Публикуя задачу на форуме, вы подтверждаете, что являетесь ее автором или имеете право на ее публикацию.<br />
+&nbsp;&nbsp;&nbsp;&nbsp;6.4) Решения, опубликованные на форуме, являются интеллектуальной собственностью их авторов. При использовании их в иных целях требуется указание авторства и ссылки на исходное обсуждение.<br /><br />
+
+Нарушение этих правил может привести к удалению контента и аккаунта. Мы стремимся сохранять наше сообщество качественным и дружелюбным местом. Спасибо, что вы с нами и вносите вклад в Сообщество Авторов Математических Задач <span class="keyword">MathProj</span>!
+    </div>
+
+    <div id="js-panel" class="panel">
+      <div class="comment1">&lt;-- Обратная связь --&gt;</div>
+      &nbsp;&nbsp;&nbsp;&nbsp;• <span class="string">Email:</span> <a href="mailto:ila413546@gmail.com">ila413546@gmail.com</a> Торресилья Терентьев Луис<br />
+   &nbsp;&nbsp;&nbsp;&nbsp;• <span class="string">Telegram:</span> <a href="https://t.me/ST_se1lut">@ST_se1lut</a> Чиккетти Маттео<br />
+   &nbsp;&nbsp;&nbsp;&nbsp;Оставляйте свои жалобы в этот Telegram чат
+    </div>
+  </div>
+</div>
+        </div>
+    </div>
+    
+    <div class="preview-modal" id="preview-modal">
+    <div class="preview-content">
+        <div class="preview-header">
+            <h2><i class="fas fa-eye"></i> Предпросмотр задачи</h2>
+            <button class="close-preview" id="close-preview">&times;</button>
+        </div>
+        <div class="preview-body">
+            <div class="preview-title" id="preview-title"></div>
+            <div class="preview-text" id="preview-content"></div>
+            <div class="preview-tags" id="preview-tags"></div>
+            <div class="preview-difficulty" id="preview-difficulty"></div>
+        </div>
+    </div>
+</div>
+
+
+<!-- Индикатор загрузки -->
+<div id="loading-overlay" style="display: none;">
+    <!-- Новый блок с анимированными словами -->
+    <div class="card-l">
+        <div class="loader">
+            <p>Загружаем</p>
+            <div class="words">
+                <span class="word"></span>                
+                <span class="word">Задачи</span>
+                <span class="word">Решения</span>
+                <span class="word">Комментарии</span>
+                <span class="word">Пользователей</span>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Пишущая машинка (остается без изменений) -->
+    <div class="typewriter">
+        <div class="slide"><i></i></div>
+        <div class="paper"></div>
+        <div class="keyboard"></div>
+    </div>
+</div>
+
+
+</body>
+</html>
